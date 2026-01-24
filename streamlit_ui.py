@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 import sqlite3
@@ -23,6 +24,178 @@ from yelp_scraper import YelpScraper
 from yellow_pages_scraper import YellowPagesScraper
 import extra_streamlit_components as stx
 from datetime import timedelta
+try:
+    from streamlit_gsheets import GSheetsConnection
+except ImportError:
+    GSheetsConnection = None
+
+# --- DB Handler Class ---
+class DBHandler:
+    def __init__(self):
+        self.use_gsheets = False
+        try:
+            if GSheetsConnection and "connections" in st.secrets and "gsheets" in st.secrets.connections:
+                self.use_gsheets = True
+                self.conn = st.connection("gsheets", type=GSheetsConnection)
+        except Exception:
+            self.use_gsheets = False
+            
+    def init_db(self):
+        if self.use_gsheets:
+            # Check if we can read, if not create basic structure in dataframe
+            try:
+                df = self.conn.read()
+                if df.empty or 'username' not in df.columns:
+                    raise Exception("Empty or invalid sheet")
+            except:
+                # Initialize sheet structure
+                initial_data = pd.DataFrame([
+                    {'username': 'admin', 'password': hash_password('admin'), 'role': 'admin', 'active': 1, 'created_at': datetime.now().isoformat()}
+                ])
+                self.conn.update(data=initial_data)
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('''CREATE TABLE IF NOT EXISTS users
+                         (username TEXT PRIMARY KEY, password TEXT, role TEXT, active INTEGER DEFAULT 1)''')
+            
+            # Check if admin exists
+            c.execute("SELECT username FROM users WHERE username='admin'")
+            if not c.fetchone():
+                admin_pass = hash_password("admin")
+                try:
+                    c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                             ("admin", admin_pass, "admin"))
+                except sqlite3.IntegrityError:
+                    pass
+            conn.commit()
+            conn.close()
+
+    def get_user(self, username):
+        if self.use_gsheets:
+            try:
+                df = self.conn.read()
+                user = df[df['username'] == username]
+                if not user.empty:
+                    # Return tuple like sqlite: (password, role, active)
+                    row = user.iloc[0]
+                    return (row['password'], row['role'], int(row['active']))
+            except Exception as e:
+                print(f"GSheets Read Error: {e}")
+            return None
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT password, role, active FROM users WHERE username=?", (username,))
+            result = c.fetchone()
+            conn.close()
+            return result
+
+    def get_all_users(self):
+        if self.use_gsheets:
+            try:
+                df = self.conn.read()
+                return df[['username', 'role', 'active']]
+            except:
+                return pd.DataFrame(columns=['username', 'role', 'active'])
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            df = pd.read_sql_query("SELECT username, role, active FROM users", conn)
+            conn.close()
+            return df
+
+    def add_user(self, username, password, role):
+        username = username.strip().lower()
+        password = password.strip()
+        hashed = hash_password(password)
+        
+        if self.use_gsheets:
+            try:
+                df = self.conn.read()
+                if username in df['username'].values:
+                    return False
+                
+                new_user = pd.DataFrame([{
+                    'username': username, 
+                    'password': hashed, 
+                    'role': role, 
+                    'active': 1,
+                    'created_at': datetime.now().isoformat()
+                }])
+                updated_df = pd.concat([df, new_user], ignore_index=True)
+                self.conn.update(data=updated_df)
+                return True
+            except:
+                return False
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            try:
+                c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                         (username, hashed, role))
+                conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
+            finally:
+                conn.close()
+
+    def update_user(self, username, new_password=None, new_role=None, active=None):
+        if self.use_gsheets:
+            try:
+                df = self.conn.read()
+                mask = df['username'] == username
+                if not mask.any(): return
+                
+                if new_password:
+                    df.loc[mask, 'password'] = hash_password(new_password)
+                if new_role:
+                    df.loc[mask, 'role'] = new_role
+                if active is not None:
+                    df.loc[mask, 'active'] = 1 if active else 0
+                    
+                self.conn.update(data=df)
+            except Exception as e:
+                print(f"Update Error: {e}")
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            updates = []
+            params = []
+            
+            if new_password:
+                updates.append("password = ?")
+                params.append(hash_password(new_password))
+            if new_role:
+                updates.append("role = ?")
+                params.append(new_role)
+            if active is not None:
+                updates.append("active = ?")
+                params.append(1 if active else 0)
+            
+            if updates:
+                params.append(username)
+                c.execute(f"UPDATE users SET {', '.join(updates)} WHERE username = ?", params)
+                conn.commit()
+            conn.close()
+
+    def delete_user(self, username):
+        if self.use_gsheets:
+            try:
+                df = self.conn.read()
+                df = df[df['username'] != username]
+                self.conn.update(data=df)
+            except:
+                pass
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("DELETE FROM users WHERE username = ?", (username,))
+            conn.commit()
+            conn.close()
+
+# Initialize DB Handler globally
+db = DBHandler()
 
 # Initialize session state
 if 'logged_in' not in st.session_state:
@@ -43,43 +216,22 @@ if 'sidebar_state' not in st.session_state:
     st.session_state.sidebar_state = 'expanded'
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (username TEXT PRIMARY KEY, password TEXT, role TEXT, active INTEGER DEFAULT 1)''')
-    
-    # Check if admin exists
-    c.execute("SELECT username FROM users WHERE username='admin'")
-    if not c.fetchone():
-        # Create default admin user
-        admin_pass = hash_password("admin")
-        try:
-            c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                     ("admin", admin_pass, "admin"))
-            print("Admin user created: admin/admin")
-        except sqlite3.IntegrityError:
-            pass
-
-        
-    conn.commit()
-    conn.close()
+    db.init_db()
 
 def authenticate_user(username, password):
-
-
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    # Hash the input password
     hashed_input = hash_password(password)
-    
-    c.execute("SELECT password, role, active FROM users WHERE username=?", (username,))
-    result = c.fetchone()
-    conn.close()
+    result = db.get_user(username)
     
     if result:
         stored_password, role, active = result
+        # Handle cases where GSheets might store integers as floats/strings
+        try:
+            active = int(active)
+        except:
+            active = 0
+            
         print(f"Debug: User {username} found. Active: {active}")
+        
         if stored_password == hashed_input:
             if active:
                 st.session_state.username = username
@@ -92,55 +244,16 @@ def authenticate_user(username, password):
     return "invalid", None
 
 def get_users():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT username, role, active FROM users", conn)
-    conn.close()
-    return df
+    return db.get_all_users()
 
 def add_user(username, password, role):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        # Enforce lowercase username and strip password
-        username = username.strip().lower()
-        password = password.strip()
-        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                 (username, hash_password(password), role))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
+    return db.add_user(username, password, role)
 
 def update_user(username, new_password=None, new_role=None, active=None):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    updates = []
-    params = []
-    
-    if new_password:
-        updates.append("password = ?")
-        params.append(hash_password(new_password))
-    if new_role:
-        updates.append("role = ?")
-        params.append(new_role)
-    if active is not None:
-        updates.append("active = ?")
-        params.append(1 if active else 0)
-    
-    if updates:
-        params.append(username)
-        c.execute(f"UPDATE users SET {', '.join(updates)} WHERE username = ?", params)
-        conn.commit()
-    conn.close()
+    db.update_user(username, new_password, new_role, active)
 
 def delete_user(username):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM users WHERE username = ?", (username,))
-    conn.commit()
-    conn.close()
+    db.delete_user(username)
 
 def login_page():
     # Exact Replica of the Dark Theme Login UI
@@ -538,11 +651,17 @@ def main():
         
         if user_token and role_token:
             # Validate user against DB to ensure they still exist/active
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT active FROM users WHERE username=?", (user_token,))
-            result = c.fetchone()
-            conn.close()
+            if db.use_gsheets:
+                # Optimized check for gsheets to avoid repeated full reads if possible, 
+                # but for safety we read.
+                user_data = db.get_user(user_token)
+                result = (user_data[2],) if user_data else None # (active,)
+            else:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("SELECT active FROM users WHERE username=?", (user_token,))
+                result = c.fetchone()
+                conn.close()
             
             if result and result[0] == 1:
                 st.session_state.logged_in = True
