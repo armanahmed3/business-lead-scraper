@@ -44,7 +44,8 @@ class DBHandler:
         if self.use_gsheets:
             # Check if we can read, if not create basic structure in dataframe
             try:
-                df = self.conn.read()
+                # Use ttl=0 to ensure we check the actual sheet status
+                df = self.conn.read(ttl=0)
                 if df.empty or 'username' not in df.columns:
                     raise Exception("Empty or invalid sheet")
             except:
@@ -52,7 +53,10 @@ class DBHandler:
                 initial_data = pd.DataFrame([
                     {'username': 'admin', 'password': hash_password('admin'), 'role': 'admin', 'active': 1, 'created_at': datetime.now().isoformat()}
                 ])
-                self.conn.update(data=initial_data)
+                try:
+                    self.conn.update(data=initial_data)
+                except Exception as e:
+                    print(f"Init DB Error: {e}")
         else:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
@@ -74,12 +78,12 @@ class DBHandler:
     def get_user(self, username):
         if self.use_gsheets:
             try:
-                df = self.conn.read()
+                df = self.conn.read(ttl=0)
                 user = df[df['username'] == username]
                 if not user.empty:
                     # Return tuple like sqlite: (password, role, active)
                     row = user.iloc[0]
-                    return (row['password'], row['role'], int(row['active']))
+                    return (row['password'], row['role'], row['active'])
             except Exception as e:
                 print(f"GSheets Read Error: {e}")
             return None
@@ -94,7 +98,7 @@ class DBHandler:
     def get_all_users(self):
         if self.use_gsheets:
             try:
-                df = self.conn.read()
+                df = self.conn.read(ttl=0)
                 return df[['username', 'role', 'active']]
             except:
                 return pd.DataFrame(columns=['username', 'role', 'active'])
@@ -111,7 +115,7 @@ class DBHandler:
         
         if self.use_gsheets:
             try:
-                df = self.conn.read()
+                df = self.conn.read(ttl=0)
                 if username in df['username'].values:
                     return False
                 
@@ -125,7 +129,8 @@ class DBHandler:
                 updated_df = pd.concat([df, new_user], ignore_index=True)
                 self.conn.update(data=updated_df)
                 return True
-            except:
+            except Exception as e:
+                print(f"Add User Error: {e}")
                 return False
         else:
             conn = sqlite3.connect(DB_PATH)
@@ -143,9 +148,9 @@ class DBHandler:
     def update_user(self, username, new_password=None, new_role=None, active=None):
         if self.use_gsheets:
             try:
-                df = self.conn.read()
+                df = self.conn.read(ttl=0)
                 mask = df['username'] == username
-                if not mask.any(): return
+                if not mask.any(): return False
                 
                 if new_password:
                     df.loc[mask, 'password'] = hash_password(new_password)
@@ -155,44 +160,55 @@ class DBHandler:
                     df.loc[mask, 'active'] = 1 if active else 0
                     
                 self.conn.update(data=df)
+                return True
             except Exception as e:
                 print(f"Update Error: {e}")
+                return False
         else:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            updates = []
-            params = []
-            
-            if new_password:
-                updates.append("password = ?")
-                params.append(hash_password(new_password))
-            if new_role:
-                updates.append("role = ?")
-                params.append(new_role)
-            if active is not None:
-                updates.append("active = ?")
-                params.append(1 if active else 0)
-            
-            if updates:
-                params.append(username)
-                c.execute(f"UPDATE users SET {', '.join(updates)} WHERE username = ?", params)
-                conn.commit()
-            conn.close()
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                updates = []
+                params = []
+                
+                if new_password:
+                    updates.append("password = ?")
+                    params.append(hash_password(new_password))
+                if new_role:
+                    updates.append("role = ?")
+                    params.append(new_role)
+                if active is not None:
+                    updates.append("active = ?")
+                    params.append(1 if active else 0)
+                
+                if updates:
+                    params.append(username)
+                    c.execute(f"UPDATE users SET {', '.join(updates)} WHERE username = ?", params)
+                    conn.commit()
+                conn.close()
+                return True
+            except Exception:
+                return False
 
     def delete_user(self, username):
         if self.use_gsheets:
             try:
-                df = self.conn.read()
+                df = self.conn.read(ttl=0)
                 df = df[df['username'] != username]
                 self.conn.update(data=df)
+                return True
             except:
-                pass
+                return False
         else:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("DELETE FROM users WHERE username = ?", (username,))
-            conn.commit()
-            conn.close()
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("DELETE FROM users WHERE username = ?", (username,))
+                conn.commit()
+                conn.close()
+                return True
+            except:
+                return False
 
 # Initialize DB Handler globally
 db = DBHandler()
@@ -224,21 +240,34 @@ def authenticate_user(username, password):
     
     if result:
         stored_password, role, active = result
-        # Handle cases where GSheets might store integers as floats/strings
-        try:
-            active = int(active)
-        except:
-            active = 0
+        # Robust boolean conversion
+        if isinstance(active, str):
+            if active.lower() in ['true', '1', 'yes']:
+                active_bool = True
+            else:
+                active_bool = False
+        else:
+            try:
+                active_bool = bool(active)
+            except:
+                active_bool = False
             
-        print(f"Debug: User {username} found. Active: {active}")
+        print(f"Debug: User {username} found. ActiveRaw: {active} -> Bool: {active_bool}")
         
         if stored_password == hashed_input:
-            if active:
+            if active_bool:
                 st.session_state.username = username
                 return "success", role
             else:
                 return "inactive", None
         else:
+            # Check for plaintext password (migration case)
+            if password == stored_password:
+                 # Auto-migrate to hash if using GSheets or similar manual entry
+                 db.update_user(username, new_password=password)
+                 if active_bool:
+                    st.session_state.username = username
+                    return "success", role
             print(f"Debug: Password mismatch for {username}")
             
     return "invalid", None
@@ -250,10 +279,10 @@ def add_user(username, password, role):
     return db.add_user(username, password, role)
 
 def update_user(username, new_password=None, new_role=None, active=None):
-    db.update_user(username, new_password, new_role, active)
+    return db.update_user(username, new_password, new_role, active)
 
 def delete_user(username):
-    db.delete_user(username)
+    return db.delete_user(username)
 
 def login_page():
     # Exact Replica of the Dark Theme Login UI
@@ -496,14 +525,18 @@ def admin_panel():
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("Update User"):
-                    update_user(selected_user, new_password if new_password else None, new_role, active_status)
-                    st.success(f"User {selected_user} updated!")
-                    st.rerun()
+                    if update_user(selected_user, new_password if new_password else None, new_role, active_status):
+                        st.success(f"User {selected_user} updated!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to update user. Check DB connection.")
             with col2:
                 if st.button("Delete User"):
-                    delete_user(selected_user)
-                    st.success(f"User {selected_user} deleted!")
-                    st.rerun()
+                    if delete_user(selected_user):
+                        st.success(f"User {selected_user} deleted!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete user.")
 
 def user_panel():
     st.title("👤 User Dashboard")
