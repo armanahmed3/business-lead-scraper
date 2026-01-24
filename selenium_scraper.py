@@ -11,6 +11,8 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from urllib.parse import quote_plus, urljoin
 import re
+import os
+import platform
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -62,9 +64,6 @@ class SeleniumScraper:
             options.add_argument('--guest')
         elif self.profile:
             self.logger.info(f"Launching Chrome with profile: {self.profile}")
-            import platform
-            import os
-            
             system = platform.system()
             if system == 'Windows':
                 user_data_dir = os.path.join(
@@ -104,14 +103,54 @@ class SeleniumScraper:
         options.add_argument('--disable-features=VizDisplayCompositor')
         options.add_argument('--disable-features=Translate')
         
+        # Environment detection for binary location
+        is_streamlit_cloud = os.environ.get('STREAMLIT_RUNTIME_ENV', '') != '' or 'SH_APP_ID' in os.environ
+        
+        if is_streamlit_cloud:
+            self.logger.info("Streamlit Cloud detected. Configuring for system Chromium...")
+            # Streamlit Cloud's chromium path
+            chrome_paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser']
+            for path in chrome_paths:
+                if os.path.exists(path):
+                    options.binary_location = path
+                    self.logger.info(f"Fixed binary location to: {path}")
+                    break
+        
         try:
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=options)
+            # TRY 1: Native Selenium 4.x Manager (Safest for Cloud)
+            # This will use system chromium-driver if available or download the correct one
+            self.logger.info("Attempting native driver initialization...")
+            self.driver = webdriver.Chrome(options=options)
             
+        except Exception as e1:
+            self.logger.warning(f"Native initialization failed: {e1}. Falling back to webdriver-manager...")
+            try:
+                # TRY 2: webdriver-manager as fallback
+                from webdriver_manager.chrome import ChromeDriverManager
+                from selenium.webdriver.chrome.service import Service
+                
+                service = Service(ChromeDriverManager().install())
+                self.driver = webdriver.Chrome(service=service, options=options)
+            except Exception as e2:
+                self.logger.error(f"Failed to initialize Chrome WebDriver with fallback: {e2}")
+                # Try one last deep fallback for Linux system path
+                if not is_streamlit_cloud:
+                    raise
+                
+                try:
+                    self.logger.info("Final attempt: forcing system driver path...")
+                    from selenium.webdriver.chrome.service import Service
+                    # Common paths for chromium-driver in debian/ubuntu
+                    driver_service = Service('/usr/bin/chromedriver')
+                    self.driver = webdriver.Chrome(service=driver_service, options=options)
+                except Exception as e3:
+                    self.logger.error(f"Critical failure: All driver initialization methods failed. {e3}")
+                    raise
+        
+        try:
             self.driver.set_page_load_timeout(
                 self.config.selenium['page_load_timeout']
             )
-            
             self.wait = WebDriverWait(self.driver, 15)
             
             self.driver.execute_script(
