@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
-import time
 import os
+import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 import sqlite3
@@ -471,48 +472,53 @@ def google_maps_scraping():
             # In a real "exact count" scenario, we'd loop. 
             # For now, we report what we have.
             
-            status_text.markdown("### 💾 Exporting Professional Data...")
+            status_text.markdown("### 💾 Preparing Download...")
             progress_bar.progress(90)
             
-            # Export
-            exporter = DataExporter(config, output_dir='./data')
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            # Clean filename
-            clean_query = "".join(x for x in query if x.isalnum() or x in " -_").strip().replace(" ", "_")
-            clean_loc = "".join(x for x in location if x.isalnum() or x in " -_").strip().replace(" ", "_")
-            base_filename = f"Leads_{clean_query}_{clean_loc}_{timestamp}"
-            
-            exported_files = exporter.export(
-                data=unique_leads,
-                formats=formats,
-                filename=base_filename
-            )
-            
-            progress_bar.progress(100)
-            status_text.markdown("### ✅ Generation Complete!")
-            
-            st.success(f"Successfully generated {len(unique_leads)} unique leads (Raw: {len(leads)})")
-            
-            if unique_leads:
-                df = pd.DataFrame(unique_leads)
-                # Show preview (limit columns for UI)
-                preview_cols = ['name', 'phone', 'email', 'website', 'address']
-                st.dataframe(df[ [c for c in preview_cols if c in df.columns] ])
+            # Use temporary directory for export to avoid disk usage issues on Cloud
+            with tempfile.TemporaryDirectory() as temp_dir:
+                exporter = DataExporter(config, output_dir=temp_dir)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                # Download buttons
-                st.markdown("### 📥 Download Results")
-                cols = st.columns(len(exported_files))
-                for idx, file_path in enumerate(exported_files):
-                    with cols[idx]:
-                        path_obj = Path(file_path)
-                        with open(file_path, 'rb') as f:
+                clean_query = "".join(x for x in query if x.isalnum() or x in " -_").strip().replace(" ", "_")
+                clean_loc = "".join(x for x in location if x.isalnum() or x in " -_").strip().replace(" ", "_")
+                base_filename = f"Leads_{clean_query}_{clean_loc}_{timestamp}"
+                
+                exported_files = exporter.export(
+                    data=unique_leads,
+                    formats=formats,
+                    filename=base_filename
+                )
+                
+                progress_bar.progress(100)
+                status_text.markdown("### ✅ Generation Complete!")
+                
+                st.success(f"Successfully generated {len(unique_leads)} unique leads (Raw: {len(leads)})")
+                
+                if unique_leads:
+                    df = pd.DataFrame(unique_leads)
+                    # Show preview (limit columns for UI)
+                    preview_cols = ['name', 'phone', 'email', 'website', 'address']
+                    st.dataframe(df[ [c for c in preview_cols if c in df.columns] ])
+                    
+                    # Download buttons - Read into memory immediately
+                    st.markdown("### 📥 Download Results" )
+                    cols = st.columns(len(exported_files))
+                    for idx, file_path in enumerate(exported_files):
+                        with cols[idx]:
+                            path_obj = Path(file_path)
+                            with open(file_path, 'rb') as f:
+                                file_data = f.read()
+                                
                             st.download_button(
                                 label=f"Download {path_obj.suffix[1:].upper()}",
-                                data=f,
+                                data=file_data,
                                 file_name=path_obj.name,
                                 mime="application/octet-stream" if path_obj.suffix != '.xlsx' else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key=f"dl_{idx}"
                             )
+                
+            # Temp dir is automatically cleaned up here
         
         except Exception as e:
             st.error(f"System Error: {str(e)}")
