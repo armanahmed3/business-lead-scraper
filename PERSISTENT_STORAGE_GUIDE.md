@@ -55,4 +55,4 @@ client_x509_cert_url = "..."
 Once you have the sheet ready, I can update your `streamlit_ui.py` to connect to it.
 
 **Would you like me to update the code now to support this Google Sheets connection?**
-(It will include a fallback so it still works offline with SQLite).
+ (It will include a fallback so it still works offline with SQLite).

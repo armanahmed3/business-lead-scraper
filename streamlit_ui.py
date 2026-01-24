@@ -42,22 +42,27 @@ class DBHandler:
             
     def init_db(self):
         if self.use_gsheets:
-            # Check if we can read, if not create basic structure in dataframe
+            # Check if we can read
             try:
                 # Use ttl=0 to ensure we check the actual sheet status
                 df = self.conn.read(ttl=0)
-                if df.empty or 'username' not in df.columns:
-                    raise Exception("Empty or invalid sheet")
-            except:
-                # Initialize sheet structure
-                initial_data = pd.DataFrame([
-                    {'username': 'admin', 'password': hash_password('admin'), 'role': 'admin', 'active': 1, 'created_at': datetime.now().isoformat()}
-                ])
-                try:
+                if df is not None and not df.empty and 'username' in df.columns:
+                    # Sheet exists and has data, don't overwrite
+                    return
+                
+                # If we get here, the sheet might be empty or missing headers
+                if df is not None and (df.empty or 'username' not in df.columns):
+                    initial_data = pd.DataFrame([
+                        {'username': 'admin', 'password': hash_password('admin'), 'role': 'admin', 'active': 1, 'created_at': datetime.now().isoformat()}
+                    ])
                     self.conn.update(data=initial_data)
-                except Exception as e:
-                    print(f"Init DB Error: {e}")
+                    print("Initialized new Google Sheet database.")
+            except Exception as e:
+                # If it's a connection error, DON'T initialize/overwrite
+                print(f"Warning: Could not connect to Google Sheets: {e}")
+                # We don't set self.use_gsheets = False here because it might be transient
         else:
+            # SQLite Logic
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS users
@@ -209,6 +214,16 @@ class DBHandler:
                 return True
             except:
                 return False
+
+    def get_storage_type(self):
+        if self.use_gsheets:
+            return "Google Sheets (Persistent)"
+        return "Local SQLite (Temporary on Cloud)"
+
+    def is_ephemeral(self):
+        # Check if running on Streamlit Cloud and using SQLite
+        is_cloud = os.environ.get('STREAMLIT_RUNTIME_ENV', '') != '' or 'SH_APP_ID' in os.environ
+        return is_cloud and not self.use_gsheets
 
 # Initialize DB Handler globally
 db = DBHandler()
@@ -484,6 +499,18 @@ def admin_panel():
         return
     
     st.header("Manage Users")
+    
+    # Persistence Warning
+    if db.is_ephemeral():
+        st.warning("""
+        ⚠️ **Warning: Temporary Storage Detected**
+        You are running on a cloud platform but haven't configured Google Sheets. 
+        **Any users you add will be deleted** when the app restarts (usually after 30 mins of inactivity).
+        
+        Please follow the `PERSISTENT_STORAGE_GUIDE.md` to set up Google Sheets for permanent storage.
+        """, icon="🚨")
+    else:
+        st.success(f"✅ Storage Mode: {db.get_storage_type()}", icon="💾")
     
     # Add new user
     st.subheader("Add New User")
