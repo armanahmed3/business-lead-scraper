@@ -245,6 +245,8 @@ if 'page' not in st.session_state:
     st.session_state.page = 'login'
 if 'sidebar_state' not in st.session_state:
     st.session_state.sidebar_state = 'expanded'
+if 'theme' not in st.session_state:
+    st.session_state.theme = 'dark' # Default to dark as it looks professional
 
 def init_db():
     db.init_db()
@@ -301,32 +303,49 @@ def delete_user(username):
 
 def login_page():
     # Exact Replica of the Dark Theme Login UI
-    st.markdown("""
+    # Dynamic Theme Colors
+    if st.session_state.theme == 'dark':
+        bg_color = "#0e1117"
+        card_bg = "#151921"
+        text_color = "#ffffff"
+        input_bg = "#262730"
+        label_color = "#bdc3c7"
+        border_color = "#2d333b"
+    else:
+        bg_color = "#f0f2f6"
+        card_bg = "#ffffff"
+        text_color = "#1a1a1a"
+        input_bg = "#f9f9f9"
+        label_color = "#4a4a4a"
+        border_color = "#e0e0e0"
+
+    st.markdown(f"""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         
         /* General App Styling */
-        .stApp {
-            background-color: #0e1117; /* Very dark background */
-        }
+        .stApp {{
+            background-color: {bg_color};
+            transition: all 0.3s ease;
+        }}
         
         /* Hide default Streamlit elements */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
+        #MainMenu {{visibility: hidden;}}
+        footer {{visibility: hidden;}}
+        header {{visibility: hidden;}}
 
         /* Centering Wrapper */
-        .login-wrapper {
+        .login-wrapper {{
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             padding-top: 50px;
             width: 100%;
-        }
+        }}
 
         /* 1. Header Card */
-        .header-card {
+        .header-card {{
             width: 100%;
             max-width: 500px;
             background: linear-gradient(90deg, #6c5ce7 0%, #a29bfe 100%); /* Purple Gradient */
@@ -336,95 +355,97 @@ def login_page():
             margin-bottom: 20px;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
             position: relative;
-        }
+        }}
         
-        .header-content {
+        .header-content {{
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 15px;
-        }
+        }}
 
-        .header-title {
+        .header-title {{
             color: white;
             font-family: 'Inter', sans-serif;
             font-size: 32px;
             font-weight: 700;
             margin: 0;
             line-height: 1;
-        }
+        }}
         
-        .lock-icon {
+        .lock-icon {{
             font-size: 32px;
-        }
+        }}
 
-        /* 2. Login Form Styling (targeting standard Streamlit widgets) */
-        
-        /* Target the Form Container */
-        [data-testid="stForm"] {
-            background-color: #151921; /* Dark Card Background */
-            border: 1px solid #2d333b;
+        /* 2. Login Form Styling */
+        [data-testid="stForm"] {{
+            background-color: {card_bg};
+            border: 1px solid {border_color};
             border-radius: 15px;
             padding: 30px;
-            max-width: 500px; /* Match header width */
-            margin: 0 auto; /* Center it */
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
+            max-width: 500px;
+            margin: 0 auto;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }}
 
         /* Input Fields */
-        .stTextInput label {
-            color: #bdc3c7 !important;
+        .stTextInput label {{
+            color: {label_color} !important;
             font-size: 14px;
             font-weight: 500;
-        }
+        }}
         
-        .stTextInput > div > div > input {
-            background-color: #262730;
-            color: white;
-            border: 1px solid #333;
+        .stTextInput > div > div > input {{
+            background-color: {input_bg};
+            color: {text_color};
+            border: 1px solid {border_color};
             border-radius: 8px;
             padding: 12px;
-        }
+        }}
         
-        .stTextInput > div > div > input:focus {
+        .stTextInput > div > div > input:focus {{
             border-color: #6c5ce7;
-            box-shadow: none;
-        }
+            box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.2);
+        }}
 
         /* Checkbox */
-        .stCheckbox {
-            color: white;
-        }
-        .stCheckbox label {
-            color: white !important;
-        }
+        .stCheckbox label {{
+            color: {text_color} !important;
+        }}
 
-        /* Submit Button (Red) */
-        .stButton > button {
-            background-color: #ff4757 !important; /* Coral Red */
+        /* Submit Button */
+        .stButton > button {{
+            background-color: #ff4757 !important;
             color: white !important;
             border: none;
             border-radius: 8px;
             padding: 10px 24px;
             font-weight: 600;
             transition: all 0.3s ease;
-            width: auto; /* Allow it to be sized by text, or 100% if preferred */
-            min-width: 120px;
-        }
+            width: 100%;
+        }}
         
-        .stButton > button:hover {
+        .stButton > button:hover {{
             background-color: #ff6b81 !important;
             box-shadow: 0 4px 12px rgba(255, 71, 87, 0.3);
-        }
+            transform: translateY(-1px);
+        }}
 
-        /* Helper to align contents */
-        .form-container {
-            width: 100%;
-            max-width: 500px;
-            margin: 0 auto;
-        }
+        /* Theme Toggle Button Link Styling */
+        .theme-toggle-container {{
+            text-align: center;
+            margin-top: 20px;
+        }}
         </style>
     """, unsafe_allow_html=True)
+
+    # 0. Theme Switcher (External to form)
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        theme_label = "🌙 Dark Mode" if st.session_state.theme == "light" else "☀️ Light Mode"
+        if st.button(theme_label, key="login_theme_toggle", use_container_width=True):
+            st.session_state.theme = "dark" if st.session_state.theme == "light" else "light"
+            st.rerun()
 
     # Layout using Columns to center the content effectively
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -766,6 +787,14 @@ def main():
             
             st.markdown(f'<div class="sidebar-header">📊 Lead Scraper Pro</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="user-info">👤 User: {st.session_state.get("username", "Unknown")}<br>🏷️ Role: {st.session_state.get("user_role", "user")}</div>', unsafe_allow_html=True)
+            
+            # Theme Toggle In Sidebar
+            st.divider()
+            theme_icon = "☀️" if st.session_state.theme == "dark" else "🌙"
+            theme_btn_text = f"{theme_icon} Switch to {'Light' if st.session_state.theme == 'dark' else 'Dark'} Mode"
+            if st.button(theme_btn_text, use_container_width=True):
+                st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
+                st.rerun()
             
             # Navigation based on role
             if st.session_state.user_role == 'admin':
