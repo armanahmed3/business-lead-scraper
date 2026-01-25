@@ -674,11 +674,12 @@ def price_estimator_tab():
     with col1:
         model_options = {
             "Google: Gemini 2.0 Flash Exp (Free)": "google/gemini-2.0-flash-exp:free",
-            "Mistral: Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
             "Meta: Llama 3 8B Instruct (Free)": "meta-llama/llama-3-8b-instruct:free",
+            "Mistral: Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
+            "HuggingFace: ZeeLine 7B (Free)": "huggingface/zeeline-7b:free",
             "OpenRouter: Auto (Free)": "openrouter/auto"
         }
-        selected_model_name = st.selectbox("Select AI Model", list(model_options.keys()))
+        selected_model_name = st.selectbox("Select AI Model", list(model_options.keys()), help="If one model is slow or rate-limited, try another free option!")
         selected_model = model_options[selected_model_name]
     
     with col2:
@@ -694,6 +695,7 @@ def price_estimator_tab():
             
         with st.spinner("🚀 AI is analyzing requirements and crafting a premium professional quote..."):
             try:
+                # ... (prompt remains the same)
                 prompt = f"""
                 You are a senior project manager and lead consultant at a world-class, premium software development agency. 
                 Your task is to analyze the following client requirements and provide a highly professional, detailed, and premium-tier price estimation in {currency}.
@@ -727,17 +729,18 @@ def price_estimator_tab():
                         "HTTP-Referer": "http://localhost:8501",
                         "X-Title": "Lead Scraper Pro Price Estimator",
                     },
-                    data=json.dumps({
+                    json={
                         "model": selected_model,
                         "messages": [
                             {"role": "system", "content": "You are an elite business consultant and senior project estimator for a top-tier software house."},
                             {"role": "user", "content": prompt}
                         ]
-                    })
+                    }
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
+                    # ... rest of the logic
                     if 'choices' in result and len(result['choices']) > 0:
                         quote = result['choices'][0]['message']['content']
                         st.success("✅ Quote generated successfully!")
@@ -755,6 +758,9 @@ def price_estimator_tab():
                         )
                     else:
                         st.error(f"Unexpected response format from AI: {result}")
+                elif response.status_code == 429:
+                    st.error("🚨 **Error 429: Rate Limit Exceeded**")
+                    st.warning("The selected AI model (Gemini) is currently busy. Please **select a different model** (like Llama 3 or Mistral) from the dropdown and try again!")
                 else:
                     st.error(f"API Error ({response.status_code}): {response.text}")
                     
