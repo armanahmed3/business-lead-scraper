@@ -674,9 +674,9 @@ def price_estimator_tab():
     with col1:
         model_options = {
             "Google: Gemini 2.0 Flash Exp (Free)": "google/gemini-2.0-flash-exp:free",
+            "Meta: Llama 3.1 8B Instruct (Free)": "meta-llama/llama-3.1-8b-instruct:free",
             "Meta: Llama 3 8B Instruct (Free)": "meta-llama/llama-3-8b-instruct:free",
             "Mistral: Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
-            "HuggingFace: ZeeLine 7B (Free)": "huggingface/zeeline-7b:free",
             "OpenRouter: Auto (Free)": "openrouter/auto"
         }
         selected_model_name = st.selectbox("Select AI Model", list(model_options.keys()), help="If one model is slow or rate-limited, try another free option!")
