@@ -68,7 +68,13 @@ class DBHandler:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS users
-                         (username TEXT PRIMARY KEY, password TEXT, role TEXT, active INTEGER DEFAULT 1)''')
+                         (username TEXT PRIMARY KEY, password TEXT, role TEXT, active INTEGER DEFAULT 1, openrouter_key TEXT)''')
+            
+            # Migration for existing DBs
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN openrouter_key TEXT")
+            except sqlite3.OperationalError:
+                pass # Already exists
             
             # Check if admin exists
             c.execute("SELECT username FROM users WHERE username='admin'")
@@ -88,19 +94,39 @@ class DBHandler:
                 df = self.conn.read(ttl=0)
                 user = df[df['username'] == username]
                 if not user.empty:
-                    # Return tuple like sqlite: (password, role, active)
+                    # Return tuple like sqlite: (password, role, active, openrouter_key)
                     row = user.iloc[0]
-                    return (row['password'], row['role'], row['active'])
+                    return (row['password'], row['role'], row.get('active', 1), row.get('openrouter_key', ""))
             except Exception as e:
                 print(f"GSheets Read Error: {e}")
             return None
         else:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("SELECT password, role, active FROM users WHERE username=?", (username,))
+            c.execute("SELECT password, role, active, openrouter_key FROM users WHERE username=?", (username,))
             result = c.fetchone()
             conn.close()
             return result
+
+    def update_api_key(self, username, key):
+        if self.use_gsheets:
+            try:
+                df = self.conn.read(ttl=0)
+                if 'openrouter_key' not in df.columns:
+                    df['openrouter_key'] = ""
+                df.loc[df['username'] == username, 'openrouter_key'] = key
+                self.conn.update(data=df)
+                return True
+            except: return False
+        else:
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("UPDATE users SET openrouter_key = ? WHERE username = ?", (key, username))
+                conn.commit()
+                conn.close()
+                return True
+            except: return False
 
     def get_all_users(self):
         if self.use_gsheets:
@@ -258,7 +284,7 @@ def authenticate_user(username, password):
     result = db.get_user(username)
     
     if result:
-        stored_password, role, active = result
+        stored_password, role, active, openrouter_key = result
         # Robust boolean conversion
         if isinstance(active, str):
             if active.lower() in ['true', '1', 'yes']:
@@ -276,6 +302,7 @@ def authenticate_user(username, password):
         if stored_password == hashed_input:
             if active_bool:
                 st.session_state.username = username
+                st.session_state.openrouter_api_key = openrouter_key if openrouter_key else ""
                 return "success", role
             else:
                 return "inactive", None
@@ -286,6 +313,7 @@ def authenticate_user(username, password):
                  db.update_user(username, new_password=password)
                  if active_bool:
                     st.session_state.username = username
+                    st.session_state.openrouter_api_key = openrouter_key if openrouter_key else ""
                     return "success", role
             print(f"Debug: Password mismatch for {username}")
             
@@ -614,11 +642,29 @@ def price_estimator_tab():
                                 value=st.session_state.openrouter_api_key,
                                 type="password", 
                                 help="Enter your OpenRouter API key. Get one at openrouter.ai")
-        if api_key:
-            st.session_state.openrouter_api_key = api_key
         
+        col_save, col_clear = st.columns([1, 1])
+        with col_save:
+            if st.button("💾 Save Permanently", use_container_width=True):
+                if api_key:
+                    if db.update_api_key(st.session_state.username, api_key):
+                        st.session_state.openrouter_api_key = api_key
+                        st.success("✅ API Key saved permanently for this user!")
+                    else:
+                        st.error("Failed to save API Key.")
+                else:
+                    st.warning("Please enter a key first.")
+        
+        with col_clear:
+            if st.button("🗑️ Clear Stored Key", use_container_width=True):
+                if db.update_api_key(st.session_state.username, ""):
+                    st.session_state.openrouter_api_key = ""
+                    st.rerun()
+
         if not st.session_state.openrouter_api_key:
             st.info("Please enter your OpenRouter API key to proceed.")
+        else:
+            st.success("✅ API Key is loaded from your profile.")
 
     client_req = st.text_area("Client Requirements / Project Details", 
                              height=200, 
@@ -848,25 +894,31 @@ def main():
         
         if user_token and role_token:
             # Validate user against DB to ensure they still exist/active
-            if db.use_gsheets:
-                # Optimized check for gsheets to avoid repeated full reads if possible, 
-                # but for safety we read.
-                user_data = db.get_user(user_token)
-                result = (user_data[2],) if user_data else None # (active,)
-            else:
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute("SELECT active FROM users WHERE username=?", (user_token,))
-                result = c.fetchone()
-                conn.close()
+            user_data = db.get_user(user_token)
             
-            if result and result[0] == 1:
-                st.session_state.logged_in = True
-                st.session_state.username = user_token
-                st.session_state.user_role = role_token
-                st.session_state.page = 'dashboard'
-                st.rerun()
+            if user_data:
+                # user_data = (password, role, active, openrouter_key)
+                active_val = user_data[2]
+                
+                # Robust boolean conversion
+                if isinstance(active_val, str):
+                    active_bool = active_val.lower() in ['true', '1', 'yes']
+                else:
+                    active_bool = bool(active_val)
+                    
+                if active_bool:
+                    st.session_state.logged_in = True
+                    st.session_state.username = user_token
+                    st.session_state.user_role = role_token
+                    st.session_state.openrouter_api_key = user_data[3] if user_data[3] else ""
+                    st.session_state.page = 'dashboard'
+                    st.rerun()
+                else:
+                    result = None # Force cleanup below
             else:
+                result = None
+            
+            if result is None:
                 # Invalid or inactive user, clear cookies
                 cookie_manager.delete('user_token')
                 cookie_manager.delete('user_role')
