@@ -589,15 +589,13 @@ def admin_panel():
                         st.error("Failed to delete user.")
 
 def user_panel():
-    st.title("👤 User Dashboard")
-    
-    tab1, tab2 = st.tabs(["🌍 Lead Scraper", "💰 Price Estimator"])
-    
-    with tab1:
-        google_maps_scraping()
-    
-    with tab2:
-        price_estimator_tab()
+    st.markdown("""
+        <div style="background-color: #2c3e50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
+            <h2 style="color: white; margin: 0;">🌍 Google Maps Lead Scraper Pro</h2>
+            <p style="color: #bdc3c7;">This is for Ti-Tech Software House Candidates. Generate high-quality business leads with advanced extraction.</p>
+        </div>
+    """, unsafe_allow_html=True)
+    google_maps_scraping()
 
 def price_estimator_tab():
     st.markdown("""
@@ -718,13 +716,6 @@ def price_estimator_tab():
                 st.error(f"💥 System Error: {str(e)}")
 
 def google_maps_scraping():
-    st.markdown("""
-        <div style="background-color: #2c3e50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
-            <h2 style="color: white; margin: 0;">🌍 Google Maps Lead Scraper Pro</h2>
-            <p style="color: #bdc3c7;">This Is Only For Ti-Tech Software House Canadiate Generate high-quality business leads with advanced extraction.</p>
-        </div>
-    """, unsafe_allow_html=True)
-    
     col1, col2 = st.columns(2)
     with col1:
         query = st.text_input("Business Criteria", "restaurants", help="E.g., Restaurants, Plumbers, Software Companies")
@@ -921,22 +912,33 @@ def main():
                 st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
                 st.rerun()
             
-            # Navigation based on role
+            # Navigation Choices
+            nav_options = ["🏠 Home / Scraper", "💰 Price Estimator"]
             if st.session_state.user_role == 'admin':
-                nav_selection = st.radio(
-                    "Navigation",
-                    ["User Dashboard", "Admin Panel"],
-                    index=0 if st.session_state.get('current_tab') != 'admin' else 1,
-                    key="nav_radio"
-                )
-                if nav_selection == "Admin Panel":
-                    st.session_state.current_tab = 'admin'
-                else:
-                    st.session_state.current_tab = 'user'
+                nav_options.append("🛡️ Admin Panel")
+            
+            # Find current index
+            current_tab = st.session_state.get('current_tab', 'user')
+            if current_tab == 'admin':
+                default_idx = nav_options.index("🛡️ Admin Panel")
+            elif current_tab == 'estimator':
+                default_idx = nav_options.index("💰 Price Estimator")
+            else:
+                default_idx = 0
+
+            nav_selection = st.radio(
+                "Navigation",
+                nav_options,
+                index=default_idx,
+                key="nav_radio"
+            )
+
+            if nav_selection == "🛡️ Admin Panel":
+                st.session_state.current_tab = 'admin'
+            elif nav_selection == "💰 Price Estimator":
+                st.session_state.current_tab = 'estimator'
             else:
                 st.session_state.current_tab = 'user'
-                st.write("")  # Empty space
-                st.write("👤 User Dashboard")
             
             st.divider()
             
@@ -957,6 +959,8 @@ def main():
         # Main content based on current tab
         if st.session_state.get('current_tab') == 'admin' and st.session_state.user_role == 'admin':
             admin_panel()
+        elif st.session_state.get('current_tab') == 'estimator':
+            price_estimator_tab()
         else:
             user_panel()
 
