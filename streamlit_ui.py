@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import requests
+import json
 import os
 import shutil
 import tempfile
@@ -589,8 +591,131 @@ def admin_panel():
 def user_panel():
     st.title("👤 User Dashboard")
     
-    # Direct access to Google Maps Scraper (Only Google Maps as requested)
-    google_maps_scraping()
+    tab1, tab2 = st.tabs(["🌍 Lead Scraper", "💰 Price Estimator"])
+    
+    with tab1:
+        google_maps_scraping()
+    
+    with tab2:
+        price_estimator_tab()
+
+def price_estimator_tab():
+    st.markdown("""
+        <div style="background-color: #2c3e50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
+            <h2 style="color: white; margin: 0;">💰 Professional Price Estimator</h2>
+            <p style="color: #bdc3c7;">Generate detailed, professional service quotes based on client requirements using AI.</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Use session state to persist API key during session
+    if 'openrouter_api_key' not in st.session_state:
+        st.session_state.openrouter_api_key = ""
+
+    with st.expander("🔑 API Configuration", expanded=not st.session_state.openrouter_api_key):
+        api_key = st.text_input("OpenRouter API Key", 
+                                value=st.session_state.openrouter_api_key,
+                                type="password", 
+                                help="Enter your OpenRouter API key. Get one at openrouter.ai")
+        if api_key:
+            st.session_state.openrouter_api_key = api_key
+        
+        if not st.session_state.openrouter_api_key:
+            st.info("Please enter your OpenRouter API key to proceed.")
+
+    client_req = st.text_area("Client Requirements / Project Details", 
+                             height=200, 
+                             placeholder="Enter the detailed requirements provided by the client (e.g., 'I need a mobile app for food delivery with real-time tracking...')")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        model_options = {
+            "Google: Gemini 2.0 Flash Exp (Free)": "google/gemini-2.0-flash-exp:free",
+            "Mistral: Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
+            "Meta: Llama 3 8B Instruct (Free)": "meta-llama/llama-3-8b-instruct:free",
+            "OpenRouter: Auto (Free)": "openrouter/auto"
+        }
+        selected_model_name = st.selectbox("Select AI Model", list(model_options.keys()))
+        selected_model = model_options[selected_model_name]
+    
+    with col2:
+        currency = st.selectbox("Currency", ["USD ($)", "EUR (€)", "GBP (£)", "PKR (Rs.)", "INR (₹)"])
+
+    if st.button("📊 Generate Premium Quote", key="gen_quote_btn", use_container_width=True):
+        if not st.session_state.openrouter_api_key:
+            st.error("❌ API Key is required! Please enter it in the API Configuration section.")
+            return
+        if not client_req:
+            st.error("❌ Please enter client requirements!")
+            return
+            
+        with st.spinner("🚀 AI is analyzing requirements and crafting a premium professional quote..."):
+            try:
+                prompt = f"""
+                You are a senior project manager and lead consultant at a world-class, premium software development agency. 
+                Your task is to analyze the following client requirements and provide a highly professional, detailed, and premium-tier price estimation in {currency}.
+                
+                CLIENT REQUIREMENTS:
+                {client_req}
+                
+                GUIDELINES FOR ESTIMATION:
+                1. Professional Tone: Use sophisticated, persuasive business language. 
+                2. Detailed Breakdown: 
+                   - Discovery & Strategy
+                   - UI/UX Design (Premium)
+                   - Development Phase (Frontend & Backend)
+                   - Quality Assurance & Testing
+                   - Deployment & DevOps
+                   - Post-Launch Support & Maintenance
+                3. Itemized Pricing: Provide a detailed price table that includes costs for specific sub-tasks and "each and every thing" mentioned in the requirements. Do not be vague.
+                4. Premium Pricing: The prices must reflect high-end, top-tier agency standards (e.g., $150-$300/hour equivalent). These are "high price trained" estimations for elite clientele.
+                5. Value Proposition: Briefly explain why each phase is critical for the success of their project.
+                6. Timeline: Estimate a professional timeline for delivery.
+                7. Total Investment: Provide a clear total investment range at the end.
+                8. Formatting: Use professional Markdown with clear headings, bold text, bullet points, and tables. 
+                
+                Act as if you are closing a high-ticket deal. Be authoritative, detailed, and clear.
+                """
+                
+                response = requests.post(
+                    url="https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {st.session_state.openrouter_api_key}",
+                        "HTTP-Referer": "http://localhost:8501",
+                        "X-Title": "Lead Scraper Pro Price Estimator",
+                    },
+                    data=json.dumps({
+                        "model": selected_model,
+                        "messages": [
+                            {"role": "system", "content": "You are an elite business consultant and senior project estimator for a top-tier software house."},
+                            {"role": "user", "content": prompt}
+                        ]
+                    })
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if 'choices' in result and len(result['choices']) > 0:
+                        quote = result['choices'][0]['message']['content']
+                        st.success("✅ Quote generated successfully!")
+                        st.markdown("---")
+                        st.markdown(quote)
+                        
+                        st.markdown("---")
+                        # Option to download as text
+                        st.download_button(
+                            label="📥 Download Professional Quote (TXT)",
+                            data=quote,
+                            file_name=f"Professional_Quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                            mime="text/plain",
+                            use_container_width=True
+                        )
+                    else:
+                        st.error(f"Unexpected response format from AI: {result}")
+                else:
+                    st.error(f"API Error ({response.status_code}): {response.text}")
+                    
+            except Exception as e:
+                st.error(f"💥 System Error: {str(e)}")
 
 def google_maps_scraping():
     st.markdown("""
