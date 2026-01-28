@@ -21,15 +21,12 @@ from selenium_scraper import SeleniumScraper
 from exporter import DataExporter
 from dedupe import Deduplicator
 from robots_checker import RobotsChecker
-from yelp_scraper import YelpScraper
-from yelp_scraper import YelpScraper
-from yellow_pages_scraper import YellowPagesScraper
 import extra_streamlit_components as stx
 from datetime import timedelta
 try:
     from streamlit_gsheets import GSheetsConnection
 except ImportError:
-    GSheetsConnection = None
+    pass
 
 # --- DB Handler Class ---
 class DBHandler:
@@ -619,107 +616,280 @@ def admin_panel():
 def user_panel():
     st.markdown("""
         <div style="background-color: #2c3e50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
-            <h2 style="color: white; margin: 0;">🌍 Google Maps Lead Scraper Pro</h2>
-            <p style="color: #bdc3c7;">This is for Ti-Tech Software House Candidates. Generate high-quality business leads with advanced extraction.</p>
+            <h2 style="color: white; margin: 0;">🌍 Lead Scraper Pro Dashboard</h2>
+            <p style="color: #bdc3c7;">Professional business lead generation tool for Ti-Tech Software House.</p>
         </div>
     """, unsafe_allow_html=True)
-    google_maps_scraping()
+    
+    # Navigation tabs
+    tab_names = ["Google Maps", "Email Sender", "Price Estimator"]
+    tabs = st.tabs(tab_names)
+    
+    for i, tab_name in enumerate(tab_names):
+        with tabs[i]:
+            if tab_name == "Google Maps":
+                google_maps_scraping()
+            elif tab_name == "Email Sender":
+                email_sender()
+            elif tab_name == "Price Estimator":
+                price_estimator()
 
-def price_estimator_tab():
+def email_sender():
     st.markdown("""
         <div style="background-color: #2c3e50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
-            <h2 style="color: white; margin: 0;">💰 Professional Price Estimator</h2>
-            <p style="color: #bdc3c7;">Generate detailed, professional service quotes based on client requirements using AI.</p>
+            <h2 style="color: white; margin: 0;">📧 Email Sender</h2>
+            <p style="color: #bdc3c7;">Send professional business emails with attachments and templates.</p>
         </div>
     """, unsafe_allow_html=True)
+    
+    # Email Configuration
+    st.subheader("🔑 SMTP Configuration")
+    with st.expander("Configure Email Settings", expanded=False):
+        smtp_server = st.text_input("SMTP Server", "smtp.gmail.com", 
+                                   help="e.g., smtp.gmail.com for Gmail")
+        smtp_port = st.number_input("SMTP Port", value=587, min_value=1, max_value=999)
+        smtp_email = st.text_input("Email Address", 
+                                  help="Your email address")
+        smtp_password = st.text_input("App Password", type="password",
+                                     help="Use App Password for Gmail - https://myaccount.google.com/apppasswords")
+        
+        if st.button("Test Connection"):
+            try:
+                import smtplib
+                from email.mime.text import MIMEText
+                from email.mime.multipart import MIMEMultipart
+                from email.mime.base import MIMEBase
+                from email import encoders
+                
+                server = smtplib.SMTP(smtp_server, smtp_port)
+                server.starttls()
+                server.login(smtp_email, smtp_password)
+                server.quit()
+                st.success("✅ SMTP connection successful!")
+            except Exception as e:
+                st.error(f"❌ Connection failed: {str(e)}")
+    
+    st.markdown("---")
+    
+    # Email Composition
+    st.subheader("📝 Compose Email")
+    
+    # Load templates
+    templates = {
+        "Custom Message": "",
+        "Business Proposal": """Dear [Name],
 
-    # Use session state to persist API key during session
+I hope this message finds you well. I'm reaching out regarding [business opportunity/lead information].
+
+We at [Your Company] would like to propose a partnership that could be mutually beneficial.
+
+Key benefits:
+• [Benefit 1]
+• [Benefit 2]
+• [Benefit 3]
+
+Would you be interested in scheduling a brief discussion to explore this opportunity further?
+
+Best regards,
+[Your Name]
+[Your Title]
+[Your Contact]""",
+        "Follow-up Email": """Dear [Name],
+
+Following up on our previous communication regarding [subject], I wanted to check if you had any questions or if there's interest in moving forward.
+
+I'd be happy to provide more details or arrange a meeting at your convenience.
+
+Looking forward to hearing from you.
+
+Best regards,
+[Your Name]""",
+        "Thank You Email": """Dear [Name],
+
+Thank you for your time and consideration. It was a pleasure discussing [topic] with you.
+
+I look forward to the possibility of working together and hope we can find a way to create value for both our organizations.
+
+Please don't hesitate to reach out if you need any additional information.
+
+Best regards,
+[Your Name]"""
+    }
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        template_name = st.selectbox("Select Template", list(templates.keys()))
+        subject = st.text_input("Subject", "Business Opportunity")
+    
+    with col2:
+        to_email = st.text_input("To Email", placeholder="recipient@example.com")
+        cc_emails = st.text_input("CC (comma separated)", placeholder="cc1@example.com, cc2@example.com")
+    
+    # Message body
+    message_body = st.text_area("Message Body", 
+                               value=templates[template_name],
+                               height=300)
+    
+    # File attachments
+    uploaded_files = st.file_uploader("Attach Files", 
+                                     accept_multiple_files=True,
+                                     type=['pdf', 'docx', 'doc', 'jpg', 'png', 'xlsx', 'csv'])
+    
+    # Send email
+    if st.button("📤 Send Email", use_container_width=True):
+        if not smtp_email or not smtp_password:
+            st.error("❌ Please configure SMTP settings first!")
+            return
+        if not to_email:
+            st.error("❌ Please enter recipient email!")
+            return
+        if not subject or not message_body:
+            st.error("❌ Please fill in subject and message body!")
+            return
+            
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.base import MIMEBase
+            from email import encoders
+            
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = smtp_email
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            if cc_emails:
+                msg['Cc'] = cc_emails
+            
+            # Add body
+            msg.attach(MIMEText(message_body, 'plain'))
+            
+            # Add attachments
+            if uploaded_files:
+                for uploaded_file in uploaded_files:
+                    part = MIMEBase('application', 'octet-stream')
+                    part.set_payload(uploaded_file.getvalue())
+                    encoders.encode_base64(part)
+                    part.add_header(
+                        'Content-Disposition',
+                        f'attachment; filename= {uploaded_file.name}'
+                    )
+                    msg.attach(part)
+            
+            # Send email
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(smtp_email, smtp_password)
+            
+            recipients = [to_email]
+            if cc_emails:
+                recipients.extend([email.strip() for email in cc_emails.split(',')])
+                
+            server.send_message(msg, to_addrs=recipients)
+            server.quit()
+            
+            st.success("✅ Email sent successfully!")
+            st.info(f"📧 Sent to: {to_email}")
+            if cc_emails:
+                st.info(f"📧 CC: {cc_emails}")
+            if uploaded_files:
+                st.info(f"📎 {len(uploaded_files)} file(s) attached")
+                
+        except Exception as e:
+            st.error(f"❌ Failed to send email: {str(e)}")
+
+def price_estimator():
+    st.markdown("""
+        <div style="background-color: #2c3e50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
+            <h2 style="color: white; margin: 0;">💰 Lifetime Free Price Estimator</h2>
+            <p style="color: #bdc3c7;">Generate detailed, professional service quotes with OpenRouter integration. No free tier limits!</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # API Key Configuration
     if 'openrouter_api_key' not in st.session_state:
         st.session_state.openrouter_api_key = ""
-
-    with st.expander("🔑 API Configuration", expanded=not st.session_state.openrouter_api_key):
+    
+    with st.expander("🔑 OpenRouter API Configuration", expanded=not st.session_state.openrouter_api_key):
         api_key = st.text_input("OpenRouter API Key", 
-                                value=st.session_state.openrouter_api_key,
-                                type="password", 
-                                help="Enter your OpenRouter API key. Get one at openrouter.ai")
+                               value=st.session_state.openrouter_api_key,
+                               type="password", 
+                               help="Get your free API key at https://openrouter.ai")
         
         col_save, col_clear = st.columns([1, 1])
         with col_save:
-            if st.button("💾 Save Permanently", use_container_width=True):
+            if st.button("💾 Save Key", use_container_width=True):
                 if api_key:
-                    if db.update_api_key(st.session_state.username, api_key):
-                        st.session_state.openrouter_api_key = api_key
-                        st.success("✅ API Key saved permanently for this user!")
-                    else:
-                        st.error("Failed to save API Key.")
+                    st.session_state.openrouter_api_key = api_key
+                    st.success("✅ API Key saved for this session!")
                 else:
                     st.warning("Please enter a key first.")
         
         with col_clear:
-            if st.button("🗑️ Clear Stored Key", use_container_width=True):
-                if db.update_api_key(st.session_state.username, ""):
-                    st.session_state.openrouter_api_key = ""
-                    st.rerun()
-
-        if not st.session_state.openrouter_api_key:
-            st.info("Please enter your OpenRouter API key to proceed.")
-        else:
-            st.success("✅ API Key is loaded from your profile.")
-
-    client_req = st.text_area("Client Requirements / Project Details", 
+            if st.button("🗑️ Clear Key", use_container_width=True):
+                st.session_state.openrouter_api_key = ""
+                st.rerun()
+    
+    if not st.session_state.openrouter_api_key:
+        st.info("Please enter your OpenRouter API key to proceed.")
+        return
+    
+    # Client Requirements
+    st.subheader("📝 Client Requirements")
+    client_req = st.text_area("Project Details", 
                              height=200, 
-                             placeholder="Enter the detailed requirements provided by the client (e.g., 'I need a mobile app for food delivery with real-time tracking...')")
-
+                             placeholder="Enter the detailed requirements provided by the client...")
+    
+    # Model Selection
     col1, col2 = st.columns(2)
     with col1:
         model_options = {
-            "Meta: Llama 3 8B Instruct (Free)": "meta-llama/llama-3-8b-instruct:free",
-            "Mistral: Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
-            "Google: Gemini 2.0 Flash Exp (Free)": "google/gemini-2.0-flash-exp:free",
-            "Microsoft: Phi-3 Mini (Free)": "microsoft/phi-3-mini-128k-instruct:free",
-            "OpenRouter: Auto (Free)": "openrouter/auto"
+            "Llama 3 8B Instruct (Free)": "meta-llama/llama-3-8b-instruct:free",
+            "Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
+            "Gemini 2.0 Flash (Free)": "google/gemini-2.0-flash-exp:free",
+            "Phi-3 Mini (Free)": "microsoft/phi-3-mini-128k-instruct:free",
+            "OpenRouter Auto (Free)": "openrouter/auto"
         }
-        selected_model_name = st.selectbox("Select AI Model", list(model_options.keys()), help="If one model is slow or rate-limited, try another free option!")
+        selected_model_name = st.selectbox("AI Model", list(model_options.keys()))
         selected_model = model_options[selected_model_name]
     
     with col2:
         currency = st.selectbox("Currency", ["USD ($)", "EUR (€)", "GBP (£)", "PKR (Rs.)", "INR (₹)"])
-
-    if st.button("📊 Generate Premium Quote", key="gen_quote_btn", use_container_width=True):
-        if not st.session_state.openrouter_api_key:
-            st.error("❌ API Key is required! Please enter it in the API Configuration section.")
-            return
+    
+    # Generate Quote
+    if st.button("📊 Generate Professional Quote", use_container_width=True):
         if not client_req:
             st.error("❌ Please enter client requirements!")
             return
             
-        with st.spinner("🚀 AI is analyzing requirements and crafting a premium professional quote..."):
+        with st.spinner("🚀 AI is analyzing requirements and generating a professional quote..."):
             try:
-                # ... (prompt remains the same)
                 prompt = f"""
-                You are a senior project manager and lead consultant at a world-class, premium software development agency. 
-                Your task is to analyze the following client requirements and provide a highly professional, detailed, and premium-tier price estimation in {currency}.
+                You are a senior project manager and lead consultant at a world-class software development agency. 
+                Analyze the following client requirements and provide a detailed, professional price estimation in {currency}.
                 
                 CLIENT REQUIREMENTS:
                 {client_req}
                 
-                GUIDELINES FOR ESTIMATION:
-                1. Professional Tone: Use sophisticated, persuasive business language. 
-                2. Detailed Breakdown: 
+                GUIDELINES:
+                1. Professional Tone: Use sophisticated business language
+                2. Detailed Breakdown:
                    - Discovery & Strategy
-                   - UI/UX Design (Premium)
-                   - Development Phase (Frontend & Backend)
-                   - Quality Assurance & Testing
-                   - Deployment & DevOps
-                   - Post-Launch Support & Maintenance
-                3. Itemized Pricing: Provide a detailed price table that includes costs for specific sub-tasks and "each and every thing" mentioned in the requirements. Do not be vague.
-                4. Premium Pricing: The prices must reflect high-end, top-tier agency standards (e.g., $150-$300/hour equivalent). These are "high price trained" estimations for elite clientele.
-                5. Value Proposition: Briefly explain why each phase is critical for the success of their project.
-                6. Timeline: Estimate a professional timeline for delivery.
-                7. Total Investment: Provide a clear total investment range at the end.
-                8. Formatting: Use professional Markdown with clear headings, bold text, bullet points, and tables. 
+                   - UI/UX Design
+                   - Development (Frontend & Backend)
+                   - Quality Assurance
+                   - Deployment
+                   - Support & Maintenance
+                3. Itemized Pricing: Provide detailed costs for each component
+                4. Premium Pricing: Reflect high-end agency standards
+                5. Value Proposition: Explain why each phase is critical
+                6. Timeline: Estimate professional delivery timeline
+                7. Total Investment: Clear total range at the end
+                8. Formatting: Use headings, bold text, bullet points, and tables
                 
-                Act as if you are closing a high-ticket deal. Be authoritative, detailed, and clear.
+                Act as if you are closing a high-ticket deal. Be authoritative and detailed.
                 """
                 
                 response = requests.post(
@@ -732,7 +902,7 @@ def price_estimator_tab():
                     json={
                         "model": selected_model,
                         "messages": [
-                            {"role": "system", "content": "You are an elite business consultant and senior project estimator for a top-tier software house."},
+                            {"role": "system", "content": "You are an elite business consultant and senior project estimator."},
                             {"role": "user", "content": prompt}
                         ]
                     }
@@ -740,32 +910,36 @@ def price_estimator_tab():
                 
                 if response.status_code == 200:
                     result = response.json()
-                    # ... rest of the logic
                     if 'choices' in result and len(result['choices']) > 0:
                         quote = result['choices'][0]['message']['content']
                         st.success("✅ Quote generated successfully!")
                         st.markdown("---")
                         st.markdown(quote)
                         
+                        # Download option
                         st.markdown("---")
-                        # Option to download as text
-                        st.download_button(
-                            label="📥 Download Professional Quote (TXT)",
-                            data=quote,
-                            file_name=f"Professional_Quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                            mime="text/plain",
-                            use_container_width=True
-                        )
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.download_button(
+                                label="💾 Download as Text",
+                                data=quote,
+                                file_name=f"quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                                mime="text/plain"
+                            )
+                        with col2:
+                            st.download_button(
+                                label="📄 Download as Markdown",
+                                data=quote,
+                                file_name=f"quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                                mime="text/markdown"
+                            )
                     else:
-                        st.error(f"Unexpected response format from AI: {result}")
-                elif response.status_code == 429:
-                    st.error("🚨 **Error 429: Rate Limit Exceeded**")
-                    st.warning("The selected AI model (Gemini) is currently busy. Please **select a different model** (like Llama 3 or Mistral) from the dropdown and try again!")
+                        st.error("❌ Failed to generate quote. Please try again.")
                 else:
-                    st.error(f"API Error ({response.status_code}): {response.text}")
+                    st.error(f"❌ API Error: {response.status_code} - {response.text}")
                     
             except Exception as e:
-                st.error(f"💥 System Error: {str(e)}")
+                st.error(f"❌ Error: {str(e)}")
 
 def google_maps_scraping():
     col1, col2 = st.columns(2)
@@ -971,7 +1145,7 @@ def main():
                 st.rerun()
             
             # Navigation Choices
-            nav_options = ["🏠 Home / Scraper", "💰 Price Estimator"]
+            nav_options = ["🏠 Home / Scraper", "📧 Email Sender", "💰 Price Estimator"]
             if st.session_state.user_role == 'admin':
                 nav_options.append("🛡️ Admin Panel")
             
@@ -981,6 +1155,8 @@ def main():
                 default_idx = nav_options.index("🛡️ Admin Panel")
             elif current_tab == 'estimator':
                 default_idx = nav_options.index("💰 Price Estimator")
+            elif current_tab == 'email':
+                default_idx = nav_options.index("📧 Email Sender")
             else:
                 default_idx = 0
 
@@ -995,6 +1171,8 @@ def main():
                 st.session_state.current_tab = 'admin'
             elif nav_selection == "💰 Price Estimator":
                 st.session_state.current_tab = 'estimator'
+            elif nav_selection == "📧 Email Sender":
+                st.session_state.current_tab = 'email'
             else:
                 st.session_state.current_tab = 'user'
             
@@ -1018,7 +1196,9 @@ def main():
         if st.session_state.get('current_tab') == 'admin' and st.session_state.user_role == 'admin':
             admin_panel()
         elif st.session_state.get('current_tab') == 'estimator':
-            price_estimator_tab()
+            price_estimator()
+        elif st.session_state.get('current_tab') == 'email':
+            email_sender()
         else:
             user_panel()
 
