@@ -1091,9 +1091,13 @@ def email_sender():
         # Pre-load core dependencies manually to ensure they exist in sys.modules
         lead_db_path = os.path.join(email_dir, "lead_database.py")
         ai_gen_path = os.path.join(email_dir, "ai_email_generator.py")
+        email_sender_path = os.path.join(email_dir, "email_sender.py")
+        email_scheduler_path = os.path.join(email_dir, "email_scheduler.py")
         
         load_module_from_file("lead_database", lead_db_path)
         load_module_from_file("ai_email_generator", ai_gen_path)
+        load_module_from_file("email_sender", email_sender_path)
+        load_module_from_file("email_scheduler", email_scheduler_path)
         
         # Add pages to sys.path if not present
         pages_dir = os.path.join(email_dir, "pages")
