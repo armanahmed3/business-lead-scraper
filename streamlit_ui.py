@@ -1104,22 +1104,33 @@ def email_sender():
         if email_dir not in sys.path:
             sys.path.append(email_dir)
 
+    # UI MODULES MANUAL LOAD
     try:
-        # Now try importing the UI pages
-        import lead_database # Should work now if manual load succeeded
+        pages_dir = os.path.join(email_dir, "pages")
         
-        # Import Pages
-        from lead_management import show_lead_management
-        from email_campaigns import show_email_campaigns
-        from email_tracking import show_email_tracking
-        from data_analytics import show_data_analytics
-        from ai_tools import show_ai_tools
-        try:
-            from settings import show_settings as show_email_settings
-        except ImportError:
-            show_email_settings = None
+        # Load modules manually to bypass import system quirks
+        m_lm = load_module_from_file("lead_management", os.path.join(pages_dir, "lead_management.py"))
+        m_ec = load_module_from_file("email_campaigns", os.path.join(pages_dir, "email_campaigns.py"))
+        m_et = load_module_from_file("email_tracking", os.path.join(pages_dir, "email_tracking.py"))
+        m_da = load_module_from_file("data_analytics", os.path.join(pages_dir, "data_analytics.py"))
+        m_ai = load_module_from_file("ai_tools", os.path.join(pages_dir, "ai_tools.py"))
+        
+        # Settings is optional
+        m_st = load_module_from_file("settings", os.path.join(pages_dir, "settings.py"))
+        
+        if not all([m_lm, m_ec, m_et, m_da, m_ai]):
+            st.error("❌ Failed to load one or more UI modules manually.")
+            return
+
+        # Extract functions
+        show_lead_management = m_lm.show_lead_management
+        show_email_campaigns = m_ec.show_email_campaigns
+        show_email_tracking = m_et.show_email_tracking
+        show_data_analytics = m_da.show_data_analytics
+        show_ai_tools = m_ai.show_ai_tools
+        show_email_settings = getattr(m_st, "show_settings", None) if m_st else None
             
-    except ImportError as e:
+    except Exception as e:
         st.error(f"❌ Critical System Error: Unable to load Email System Modules.")
         st.code(f"Error Details: {str(e)}")
         st.info(f"Searched in: {email_dir}")
