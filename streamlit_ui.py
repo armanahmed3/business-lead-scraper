@@ -277,12 +277,15 @@ class DBHandler:
         if self.use_gsheets:
             try:
                 df = self.conn.read(ttl=0)
-                return df[['username', 'role', 'active', 'plan', 'usage_count', 'usage_limit']]
+                # Ensure all columns exist even if not in sheet
+                for col in ['plan', 'usage_count', 'usage_limit', 'email_count', 'email_limit']:
+                    if col not in df.columns: df[col] = 0 if 'count' in col or 'limit' in col else 'free'
+                return df[['username', 'role', 'active', 'plan', 'usage_count', 'usage_limit', 'email_count', 'email_limit']]
             except:
-                return pd.DataFrame(columns=['username', 'role', 'active', 'plan', 'usage_count', 'usage_limit'])
+                return pd.DataFrame(columns=['username', 'role', 'active', 'plan', 'usage_count', 'usage_limit', 'email_count', 'email_limit'])
         else:
             conn = sqlite3.connect(DB_PATH)
-            df = pd.read_sql_query("SELECT username, role, active, plan, usage_count, usage_limit FROM users", conn)
+            df = pd.read_sql_query("SELECT username, role, active, plan, usage_count, usage_limit, email_count, email_limit FROM users", conn)
             conn.close()
             return df
 
@@ -832,11 +835,17 @@ def admin_panel():
             with col5:
                 # Usage Limit
                 current_limit = user_data.get('usage_limit', 50)
-                new_limit = st.number_input("Lead Limit", value=int(current_limit), step=50, key=f"upd_limit_{selected_user}")
+                try: 
+                    safe_limit = int(float(current_limit)) if pd.notnull(current_limit) else 50
+                except: safe_limit = 50
+                new_limit = st.number_input("Lead Limit", value=safe_limit, step=50, key=f"upd_limit_{selected_user}")
             with col1:
                 # Email Limit
                 current_email_limit = user_data.get('email_limit', 100)
-                new_email_limit = st.number_input("Email Limit", value=int(current_email_limit), step=100, key=f"upd_email_limit_{selected_user}")
+                try: 
+                    safe_email_limit = int(float(current_email_limit)) if pd.notnull(current_email_limit) else 100
+                except: safe_email_limit = 100
+                new_email_limit = st.number_input("Email Limit", value=safe_email_limit, step=100, key=f"upd_email_limit_{selected_user}")
             
             col_act1, col_act2 = st.columns(2)
             with col_act1:
