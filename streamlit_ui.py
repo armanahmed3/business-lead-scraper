@@ -1051,75 +1051,78 @@ def email_sender():
     """, unsafe_allow_html=True)
     
     # Dynamic imports for the email system components
-    # We strictly use direct imports because we added the directories to sys.path
-    # Dynamic imports for the email system components
-    # We strictly use direct imports because we added the directories to sys.path
-    try:
-        # 1. Verify we can see the base modules
+    # ROBUST LOADING MECHANISM
+    import importlib.util
+    import sys
+    import os
+
+    def load_module_from_file(module_name, file_path):
+        """Helper to load a module directly from a file path"""
         try:
-            import lead_database
-        except ImportError as e:
-            st.error(f"❌ Email System Error: lead_database module not found.")
+            if module_name in sys.modules:
+                return sys.modules[module_name]
+                
+            spec = importlib.util.spec_from_file_location(module_name, file_path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                return module
+        except Exception as e:
+            st.error(f"Failed to load {module_name} from {file_path}: {e}")
+            return None
+        return None
+
+    # Locate the Email System directory
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    email_dir = None
+    
+    # Try to find the directory strictly
+    possible_dirs = [d for d in os.listdir(current_dir) if d.startswith("Email Sending")]
+    if possible_dirs:
+        email_dir = os.path.join(current_dir, possible_dirs[0])
+    
+    if not email_dir or not os.path.exists(email_dir):
+        # Fallback for cloud structure variations
+        if os.path.exists(os.path.join(current_dir, "Email Sending  Stremlit")):
+             email_dir = os.path.join(current_dir, "Email Sending  Stremlit")
+
+    if email_dir:
+        # Pre-load core dependencies manually to ensure they exist in sys.modules
+        lead_db_path = os.path.join(email_dir, "lead_database.py")
+        ai_gen_path = os.path.join(email_dir, "ai_email_generator.py")
+        
+        load_module_from_file("lead_database", lead_db_path)
+        load_module_from_file("ai_email_generator", ai_gen_path)
+        
+        # Add pages to sys.path if not present
+        pages_dir = os.path.join(email_dir, "pages")
+        if pages_dir not in sys.path:
+            sys.path.append(pages_dir)
             
-            # DIAGNOSTIC BLOCK
-            with st.expander("🔍 Click for Technical Diagnostics", expanded=True):
-                st.write(f"Import Error: {e}")
-                
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                st.write(f"Current Directory: `{current_dir}`")
-                
-                # Check for the directory
-                target_dir = None
-                for d in os.listdir(current_dir):
-                    if d.startswith("Email Sending"):
-                        target_dir = os.path.join(current_dir, d)
-                        st.write(f"Found Email Directory: `{target_dir}`")
-                        break
-                
-                if target_dir and os.path.exists(target_dir):
-                    files = os.listdir(target_dir)
-                    if "lead_database.py" in files:
-                        st.success("✅ `lead_database.py` exists in the directory.")
-                        
-                        # Check sys.path
-                        if target_dir in sys.path:
-                            st.info("ℹ️ Directory IS in sys.path.")
-                        else:
-                            st.warning("⚠️ Directory is NOT in sys.path. Attempting to add...")
-                            sys.path.append(target_dir)
-                            try:
-                                import lead_database
-                                st.success("✅ Re-import successful! Please reload the page.")
-                                st.rerun()
-                            except Exception as re_e:
-                                st.error(f"❌ Re-import failed: {re_e}")
-                    else:
-                        st.error("🚨 `lead_database.py` is MISSING from the directory.")
-                        st.write("File list:", files)
-                else:
-                    st.error("❌ 'Email Sending...' directory NOT found on server.")
-                    st.write("Root files:", os.listdir(current_dir))
-            return
+        # Add main email dir to sys.path too
+        if email_dir not in sys.path:
+            sys.path.append(email_dir)
 
-        # 2. Import the UI components
+    try:
+        # Now try importing the UI pages
+        import lead_database # Should work now if manual load succeeded
+        
+        # Import Pages
+        from lead_management import show_lead_management
+        from email_campaigns import show_email_campaigns
+        from email_tracking import show_email_tracking
+        from data_analytics import show_data_analytics
+        from ai_tools import show_ai_tools
         try:
-            from lead_management import show_lead_management
-            from email_campaigns import show_email_campaigns
-            from email_tracking import show_email_tracking
-            from data_analytics import show_data_analytics
-            from ai_tools import show_ai_tools
-            try:
-                from settings import show_settings as show_email_settings
-            except ImportError:
-                show_email_settings = None
-        except ImportError as e:
-            st.error(f"❌ Email System Error: Could not load UI pages.")
-            st.code(f"Error: {e}\n\nMake sure the 'pages' folder is in sys.path.")
-            return
-
-    except Exception as e:
-        st.error(f"❌ Critical Error: Unexpected error loading Email System.")
-        st.info(f"Details: {str(e)}")
+            from settings import show_settings as show_email_settings
+        except ImportError:
+            show_email_settings = None
+            
+    except ImportError as e:
+        st.error(f"❌ Critical System Error: Unable to load Email System Modules.")
+        st.code(f"Error Details: {str(e)}")
+        st.info(f"Searched in: {email_dir}")
         return
 
     # Create tabs for the complete system
