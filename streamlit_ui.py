@@ -1052,13 +1052,53 @@ def email_sender():
     
     # Dynamic imports for the email system components
     # We strictly use direct imports because we added the directories to sys.path
+    # Dynamic imports for the email system components
+    # We strictly use direct imports because we added the directories to sys.path
     try:
         # 1. Verify we can see the base modules
         try:
             import lead_database
         except ImportError as e:
-            st.error(f"❌ Email System Error: Could not load core database module. SysPath issue?")
-            st.code(f"Error: {e}")
+            st.error(f"❌ Email System Error: lead_database module not found.")
+            
+            # DIAGNOSTIC BLOCK
+            with st.expander("🔍 Click for Technical Diagnostics", expanded=True):
+                st.write(f"Import Error: {e}")
+                
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                st.write(f"Current Directory: `{current_dir}`")
+                
+                # Check for the directory
+                target_dir = None
+                for d in os.listdir(current_dir):
+                    if d.startswith("Email Sending"):
+                        target_dir = os.path.join(current_dir, d)
+                        st.write(f"Found Email Directory: `{target_dir}`")
+                        break
+                
+                if target_dir and os.path.exists(target_dir):
+                    files = os.listdir(target_dir)
+                    if "lead_database.py" in files:
+                        st.success("✅ `lead_database.py` exists in the directory.")
+                        
+                        # Check sys.path
+                        if target_dir in sys.path:
+                            st.info("ℹ️ Directory IS in sys.path.")
+                        else:
+                            st.warning("⚠️ Directory is NOT in sys.path. Attempting to add...")
+                            sys.path.append(target_dir)
+                            try:
+                                import lead_database
+                                st.success("✅ Re-import successful! Please reload the page.")
+                                st.rerun()
+                            except Exception as re_e:
+                                st.error(f"❌ Re-import failed: {re_e}")
+                    else:
+                        st.error("🚨 `lead_database.py` is MISSING from the directory.")
+                        st.write("File list:", files)
+                else:
+                    st.error("❌ 'Email Sending...' directory NOT found on server.")
+                    st.write("Root files:", os.listdir(current_dir))
             return
 
         # 2. Import the UI components
