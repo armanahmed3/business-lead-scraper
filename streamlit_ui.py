@@ -28,8 +28,14 @@ import sys
 from pathlib import Path
 
 # Add the Email Sending Stremlit directory and its components to Python path
-email_system_path = Path(__file__).parent / "Email Sending  Stremlit"
-if email_system_path.exists():
+# Using dynamic search to handle potential folder name variations (like spaces)
+email_system_path = None
+for folder in os.listdir(Path(__file__).parent):
+    if folder.startswith("Email Sending") and os.path.isdir(os.path.join(Path(__file__).parent, folder)):
+        email_system_path = Path(__file__).parent / folder
+        break
+
+if email_system_path and email_system_path.exists():
     paths_to_add = [
         str(email_system_path),
         str(email_system_path / "backend"),
@@ -38,6 +44,13 @@ if email_system_path.exists():
     for p in paths_to_add:
         if p not in sys.path:
             sys.path.append(p)
+else:
+    # Fallback if dynamic search fails
+    email_system_path = Path(__file__).parent / "Email Sending  Stremlit"
+    if email_system_path.exists():
+        sys.path.append(str(email_system_path))
+        sys.path.append(str(email_system_path / "backend"))
+        sys.path.append(str(email_system_path / "pages"))
 
 try:
     from streamlit_gsheets import GSheetsConnection
@@ -926,9 +939,17 @@ def show_saas_dashboard():
     email_usage = st.session_state.get('email_count', 0)
     email_limit = st.session_state.get('email_limit', 100)
     plan = st.session_state.get('user_plan', 'free').upper()
-    is_unlimited = (plan == 'ENTERPRISE' or st.session_state.get('user_role') == 'admin')
+    is_admin = st.session_state.get('user_role') == 'admin'
+    is_enterprise = plan == 'ENTERPRISE'
+    is_unlimited = (is_enterprise or is_admin)
     
-    plan_display = "💎 UNLIMITED" if is_unlimited else f"{plan} Plan"
+    if is_admin:
+        plan_display = "🛡️ ADMIN (Unlimited)"
+    elif is_enterprise:
+        plan_display = "💎 ENTERPRISE (Unlimited)"
+    else:
+        plan_display = f"{plan} Plan"
+
     st.markdown(f"### 📊 Live Analytics - Account: {st.session_state.get('username')} | {plan_display}")
     
     col1, col2, col3 = st.columns(3)
@@ -1029,9 +1050,9 @@ def email_sender():
         </div>
     """, unsafe_allow_html=True)
     
-    # Import pages from the email system
+    # Dynamic imports for the email system components
     try:
-        # Since we added the 'pages' dir to sys.path, we can import directly
+        # Step 1: Try direct import (assuming 'pages' folder is in sys.path)
         from lead_management import show_lead_management
         from email_campaigns import show_email_campaigns
         from email_tracking import show_email_tracking
@@ -1041,8 +1062,9 @@ def email_sender():
             from settings import show_settings as show_email_settings
         except ImportError:
             show_email_settings = None
-    except ImportError as e:
-        # Fallback to absolute import if relative fails
+            
+    except ImportError:
+        # Step 2: Try package import (assuming 'Email Sending Stremlit' is in sys.path)
         try:
             from pages.lead_management import show_lead_management
             from pages.email_campaigns import show_email_campaigns
@@ -1050,9 +1072,10 @@ def email_sender():
             from pages.data_analytics import show_data_analytics
             from pages.ai_tools import show_ai_tools
             from pages.settings import show_settings as show_email_settings
-        except ImportError as e2:
-            st.error(f"Error importing email system components: {e2}")
-            st.info("Make sure the 'Email Sending  Stremlit/pages' folder is present and contains the required files.")
+        except ImportError as e:
+            st.error(f"❌ Critical Error: Could not load Email System modules.")
+            st.code(f"Sys Path: {sys.path}\nError: {str(e)}")
+            st.warning("Please ensure the 'Email Sending Stremlit' folder exists and contains 'pages' subfolder with correct files.")
             return
 
     # Create tabs for the complete system
