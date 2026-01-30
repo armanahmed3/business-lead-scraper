@@ -491,16 +491,24 @@ def authenticate_user(username, password):
                 
                 # SaaS Session State
                 st.session_state.user_plan = plan if plan else "free"
-                st.session_state.usage_count = int(usage_count) if usage_count else 0
-                st.session_state.email_count = int(email_count) if email_count else 0
+                
+                # Safe conversion function
+                def safe_int(val, default=0):
+                    try:
+                        if pd.isna(val): return default
+                        return int(float(val))
+                    except: return default
+
+                st.session_state.usage_count = safe_int(usage_count, 0)
+                st.session_state.email_count = safe_int(email_count, 0)
                 
                 if role == 'admin':
                     st.session_state.user_plan = 'enterprise'
                     st.session_state.usage_limit = 1000000
                     st.session_state.email_limit = 1000000
                 else:
-                    st.session_state.usage_limit = int(usage_limit) if usage_limit else 50
-                    st.session_state.email_limit = int(email_limit) if email_limit else 100
+                    st.session_state.usage_limit = safe_int(usage_limit, 50)
+                    st.session_state.email_limit = safe_int(email_limit, 100)
                 
                 return "success", role
             else:
@@ -522,16 +530,24 @@ def authenticate_user(username, password):
                     
                     # SaaS Session State
                     st.session_state.user_plan = plan if plan else "free"
-                    st.session_state.usage_count = int(usage_count) if usage_count else 0
-                    st.session_state.email_count = int(email_count) if email_count else 0
+                    
+                    # Safe conversion function (re-defined or used from above scope if applicable)
+                    def safe_int_mig(val, default=0):
+                        try:
+                            if pd.isna(val): return default
+                            return int(float(val))
+                        except: return default
+
+                    st.session_state.usage_count = safe_int_mig(usage_count, 0)
+                    st.session_state.email_count = safe_int_mig(email_count, 0)
                     
                     if role == 'admin':
                         st.session_state.user_plan = 'enterprise'
                         st.session_state.usage_limit = 1000000
                         st.session_state.email_limit = 1000000
                     else:
-                        st.session_state.usage_limit = int(usage_limit) if usage_limit else 50
-                        st.session_state.email_limit = int(email_limit) if email_limit else 100
+                        st.session_state.usage_limit = safe_int_mig(usage_limit, 50)
+                        st.session_state.email_limit = safe_int_mig(email_limit, 100)
                     
                     return "success", role
             print(f"Debug: Password mismatch for {username}")
