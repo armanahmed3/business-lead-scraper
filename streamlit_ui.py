@@ -27,10 +27,17 @@ from datetime import timedelta
 import sys
 from pathlib import Path
 
-# Add the Email Sending Stremlit directory to Python path
+# Add the Email Sending Stremlit directory and its components to Python path
 email_system_path = Path(__file__).parent / "Email Sending  Stremlit"
-sys.path.append(str(email_system_path))
-sys.path.append(str(email_system_path / "backend"))
+if email_system_path.exists():
+    paths_to_add = [
+        str(email_system_path),
+        str(email_system_path / "backend"),
+        str(email_system_path / "pages")
+    ]
+    for p in paths_to_add:
+        if p not in sys.path:
+            sys.path.append(p)
 
 try:
     from streamlit_gsheets import GSheetsConnection
@@ -1024,16 +1031,29 @@ def email_sender():
     
     # Import pages from the email system
     try:
-        from pages.lead_management import show_lead_management
-        from pages.email_campaigns import show_email_campaigns
-        from pages.email_tracking import show_email_tracking
-        from pages.data_analytics import show_data_analytics
-        from pages.ai_tools import show_ai_tools
-        from pages.settings import show_settings as show_email_settings
+        # Since we added the 'pages' dir to sys.path, we can import directly
+        from lead_management import show_lead_management
+        from email_campaigns import show_email_campaigns
+        from email_tracking import show_email_tracking
+        from data_analytics import show_data_analytics
+        from ai_tools import show_ai_tools
+        try:
+            from settings import show_settings as show_email_settings
+        except ImportError:
+            show_email_settings = None
     except ImportError as e:
-        st.error(f"Error importing email system components: {e}")
-        st.info("Make sure the 'Email Sending  Stremlit' folder is present and correct.")
-        return
+        # Fallback to absolute import if relative fails
+        try:
+            from pages.lead_management import show_lead_management
+            from pages.email_campaigns import show_email_campaigns
+            from pages.email_tracking import show_email_tracking
+            from pages.data_analytics import show_data_analytics
+            from pages.ai_tools import show_ai_tools
+            from pages.settings import show_settings as show_email_settings
+        except ImportError as e2:
+            st.error(f"Error importing email system components: {e2}")
+            st.info("Make sure the 'Email Sending  Stremlit/pages' folder is present and contains the required files.")
+            return
 
     # Create tabs for the complete system
     email_tabs = st.tabs([
