@@ -25,6 +25,10 @@ Since Streamlit Cloud resets your database when it reboots, the best **Lifetime 
     *   **C1**: `role`
     *   **D1**: `active`
     *   **E1**: `created_at`
+    *   **F1**: `openrouter_key`
+    *   **G1**: `smtp_user`
+    *   **H1**: `smtp_pass`
+    *   **I1**: `gsheets_creds`
 4.  Click the **Share** button (top right).
 5.  **Copy the "client_email"** from your JSON key file (from Step 2).
 6.  Paste it into the Share box and give it **Editor** access. This allows your app to write new users to the sheet.

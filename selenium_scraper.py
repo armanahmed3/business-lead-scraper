@@ -9,14 +9,8 @@ import random
 import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus
 import re
-import os
-import platform
-try:
-    from bs4 import BeautifulSoup
-except ImportError:
-    BeautifulSoup = None
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -64,6 +58,9 @@ class SeleniumScraper:
             options.add_argument('--guest')
         elif self.profile:
             self.logger.info(f"Launching Chrome with profile: {self.profile}")
+            import platform
+            import os
+            
             system = platform.system()
             if system == 'Windows':
                 user_data_dir = os.path.join(
@@ -103,54 +100,14 @@ class SeleniumScraper:
         options.add_argument('--disable-features=VizDisplayCompositor')
         options.add_argument('--disable-features=Translate')
         
-        # Environment detection for binary location
-        is_streamlit_cloud = os.environ.get('STREAMLIT_RUNTIME_ENV', '') != '' or 'SH_APP_ID' in os.environ
-        
-        if is_streamlit_cloud:
-            self.logger.info("Streamlit Cloud detected. Configuring for system Chromium...")
-            # Streamlit Cloud's chromium path
-            chrome_paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser']
-            for path in chrome_paths:
-                if os.path.exists(path):
-                    options.binary_location = path
-                    self.logger.info(f"Fixed binary location to: {path}")
-                    break
-        
         try:
-            # TRY 1: Native Selenium 4.x Manager (Safest for Cloud)
-            # This will use system chromium-driver if available or download the correct one
-            self.logger.info("Attempting native driver initialization...")
-            self.driver = webdriver.Chrome(options=options)
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=options)
             
-        except Exception as e1:
-            self.logger.warning(f"Native initialization failed: {e1}. Falling back to webdriver-manager...")
-            try:
-                # TRY 2: webdriver-manager as fallback
-                from webdriver_manager.chrome import ChromeDriverManager
-                from selenium.webdriver.chrome.service import Service
-                
-                service = Service(ChromeDriverManager().install())
-                self.driver = webdriver.Chrome(service=service, options=options)
-            except Exception as e2:
-                self.logger.error(f"Failed to initialize Chrome WebDriver with fallback: {e2}")
-                # Try one last deep fallback for Linux system path
-                if not is_streamlit_cloud:
-                    raise
-                
-                try:
-                    self.logger.info("Final attempt: forcing system driver path...")
-                    from selenium.webdriver.chrome.service import Service
-                    # Common paths for chromium-driver in debian/ubuntu
-                    driver_service = Service('/usr/bin/chromedriver')
-                    self.driver = webdriver.Chrome(service=driver_service, options=options)
-                except Exception as e3:
-                    self.logger.error(f"Critical failure: All driver initialization methods failed. {e3}")
-                    raise
-        
-        try:
             self.driver.set_page_load_timeout(
                 self.config.selenium['page_load_timeout']
             )
+            
             self.wait = WebDriverWait(self.driver, 15)
             
             self.driver.execute_script(
@@ -182,42 +139,34 @@ class SeleniumScraper:
         tile_mode: bool = False,
         tile_size: float = 0.1
     ) -> List[Dict]:
-        """Scrape business leads from Google Maps with enhanced extraction."""
+        """Scrape business leads from Google Maps."""
         all_leads = []
         
-        # Temporarily disable robots.txt for testing purposes
-        original_robots_enabled = self.config.robots['enabled']
-        self.config.robots['enabled'] = False
+        if not self._check_robots_txt('https://www.google.com/maps'):
+            self.logger.error("Scraping not allowed by robots.txt")
+            return all_leads
         
-        try:
-            self.logger.info("Navigating to Google Maps...")
-            self.driver.get('https://www.google.com/maps')
-            sleep_random(3, 1)
-            
-            if self._detect_captcha():
-                self._handle_captcha()
-            
-            search_query = f"{query} {location}"
-            self.logger.info(f"Searching for: {search_query}")
-            
-            if not self._perform_search(search_query):
-                self.logger.error("Search failed")
-                return all_leads
-            
-            self.logger.info("Waiting for results to load...")
-            sleep_random(4, 1)
-            
-            # Scroll to load more results
-            self._scroll_for_more_results(max_results)
-            
-            leads = self._extract_results(max_results)
-            all_leads.extend(leads)
-            
-            self.logger.info(f"✓ Extracted {len(leads)} businesses from Google Maps")
-            
-        finally:
-            # Restore original robots.txt setting
-            self.config.robots['enabled'] = original_robots_enabled
+        self.logger.info("Navigating to Google Maps...")
+        self.driver.get('https://www.google.com/maps')
+        sleep_random(3, 1)
+        
+        if self._detect_captcha():
+            self._handle_captcha()
+        
+        search_query = f"{query} {location}"
+        self.logger.info(f"Searching for: {search_query}")
+        
+        if not self._perform_search(search_query):
+            self.logger.error("Search failed")
+            return all_leads
+        
+        self.logger.info("Waiting for results to load...")
+        sleep_random(4, 1)
+        
+        leads = self._extract_results(max_results)
+        all_leads.extend(leads)
+        
+        self.logger.info(f"✓ Extracted {len(leads)} businesses")
         
         return all_leads
     
@@ -235,58 +184,6 @@ class SeleniumScraper:
             self.logger.warning("✗ Scraping disallowed by robots.txt")
         
         return allowed
-    
-    def _scroll_for_more_results(self, max_results: int):
-        """Scroll the results panel to load more businesses."""
-        try:
-            # Find the results panel
-            result_panels = [
-                '[role="feed"]',
-                '.m6QErb[role="feed"]',
-                '.m6QErb.DxyBCb.kA9KIf.dS8AEf.ecceSd',
-                '.m6QErb[aria-label*="Results"]'
-            ]
-            
-            results_panel = None
-            for selector in result_panels:
-                try:
-                    results_panel = self.wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                    )
-                    self.logger.debug(f"Found results panel with: {selector}")
-                    break
-                except TimeoutException:
-                    continue
-            
-            if not results_panel:
-                self.logger.warning("Could not find results panel for scrolling")
-                return
-            
-            # Scroll to load more results
-            self.logger.info("Scrolling to load more results...")
-            scroll_pause_time = 1.5
-            scroll_attempts = min(max_results // 5, 20)  # Limit scroll attempts
-            
-            for i in range(scroll_attempts):
-                # Scroll down the results panel
-                self.driver.execute_script(
-                    "arguments[0].scrollTop = arguments[0].scrollHeight", 
-                    results_panel
-                )
-                sleep_random(scroll_pause_time, 0.5)
-                
-                # Check if we have enough results
-                current_results = len(results_panel.find_elements(By.CSS_SELECTOR, '[role="article"]'))
-                self.logger.debug(f"Loaded {current_results} results after {i+1} scrolls")
-                
-                if current_results >= max_results:
-                    break
-            
-            article_count = len(results_panel.find_elements(By.CSS_SELECTOR, '[role="article"]'))
-            self.logger.info(f"Finished scrolling, loaded approximately {article_count} results")
-            
-        except Exception as e:
-            self.logger.warning(f"Error during scrolling: {e}")
     
     def _perform_search(self, query: str) -> bool:
         """Perform search on Google Maps."""
@@ -626,18 +523,11 @@ class SeleniumScraper:
             # Extract website
             website = (
                 self._safe_extract(By.CSS_SELECTOR, 'a[data-item-id="authority"]', 'href') or
-                self._safe_extract(By.CSS_SELECTOR, 'a[data-tooltip="Open website"]', 'href') or
-                self._safe_extract(By.CSS_SELECTOR, 'a[aria-label*="website"]', 'href')
+                self._safe_extract(By.CSS_SELECTOR, 'a[data-tooltip="Open website"]', 'href')
             )
             
-            # Website Details (Email + Social Media)
+            # EMAIL EXTRACTION
             email = None
-            social_links = {
-                'facebook': None, 'instagram': None, 'twitter': None, 
-                'linkedin': None, 'youtube': None, 'tiktok': None, 'whatsapp': None
-            }
-            
-            # First try to find email in Maps source
             try:
                 page_source = self.driver.page_source
                 email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
@@ -653,54 +543,26 @@ class SeleniumScraper:
                 
                 if filtered_emails:
                     email = filtered_emails[0]
-                    self.logger.debug(f"Found email in Maps: {email}")
+                    self.logger.debug(f"Found email: {email}")
             except:
                 pass
             
-            # If website exists, visit it for more details
-            if website:
+            if not email and website:
                 try:
-                    site_details = self._extract_website_details(website)
-                    if site_details:
-                        if not email and site_details.get('email'):
-                            email = site_details['email']
-                        
-                        # Update social links
-                        for k, v in site_details.get('social_media', {}).items():
-                            if v:
-                                social_links[k] = v
-                except Exception as e:
-                    self.logger.warning(f"Error scraping website details: {e}")
+                    email = self._extract_email_from_website(website)
+                except:
+                    pass
             
             # Extract category
             category = self._safe_extract(By.CSS_SELECTOR, 'button[jsaction*="category"]', 'text')
             
-            # Extract rating - IMPROVED SELECTORS
-            rating = None
-            rating_text = (
-                self._safe_extract(By.CSS_SELECTOR, 'div.F7nice > span[aria-hidden="true"]', 'text') or
-                self._safe_extract(By.CSS_SELECTOR, 'span[role="img"][aria-label*="stars"]', 'aria-label') or 
-                self._safe_extract(By.CSS_SELECTOR, '.fontDisplayLarge', 'text')
-            )
-            if rating_text:
-                rating = self._parse_rating(rating_text)
+            # Extract rating
+            rating_text = self._safe_extract(By.CSS_SELECTOR, 'div.F7nice > span[aria-hidden="true"]', 'text')
+            rating = self._parse_rating(rating_text)
             
-            # Extract reviews - IMPROVED SELECTORS
-            reviews = None
-            reviews_text = (
-                self._safe_extract(By.CSS_SELECTOR, 'div.F7nice > span > span > span[aria-label]', 'aria-label') or
-                self._safe_extract(By.CSS_SELECTOR, 'button[jsaction*="review"]', 'text') or
-                self._safe_extract(By.CSS_SELECTOR, 'span[aria-label*="reviews"]', 'aria-label')
-            )
-            if reviews_text:
-                reviews = self._parse_reviews(reviews_text)
-            
-            # Extract additional details
-            opening_hours = self._safe_extract(By.CSS_SELECTOR, '[aria-label*="Open"], [aria-label*="Closed"]', 'aria-label')
-            price_level = self._safe_extract(By.CSS_SELECTOR, 'span[role="img"][aria-label*="Price"]', 'aria-label')
-            
-            # Determine WhatsApp Availability (Available/Not Detected)
-            whatsapp_status = "Available" if social_links.get('whatsapp') else "Not Detected"
+            # Extract reviews
+            reviews_text = self._safe_extract(By.CSS_SELECTOR, 'div.F7nice > span > span > span[aria-label]', 'aria-label')
+            reviews = self._parse_reviews(reviews_text)
             
             # Extract coordinates
             coords = self._extract_coordinates(current_url)
@@ -715,16 +577,12 @@ class SeleniumScraper:
                 'category': category,
                 'rating': rating,
                 'reviews': reviews,
-                'opening_hours': opening_hours,
-                'price_level': price_level,
-                'whatsapp_status': whatsapp_status,
                 'latitude': coords[0] if coords else None,
                 'longitude': coords[1] if coords else None,
                 'maps_url': current_url,
                 'source_url': current_url,
                 'timestamp': datetime.now().isoformat(),
-                'labels': None,
-                **social_links  # Unpack social links
+                'labels': None
             }
             
             return business
@@ -749,106 +607,44 @@ class SeleniumScraper:
                 'labels': None
             }
     
-    def _extract_website_details(self, website_url: str, timeout: int = 10) -> Dict:
-        """Extract email and social media links from business website."""
-        details = {
-            'email': None,
-            'social_media': {
-                'facebook': None, 'instagram': None, 'twitter': None, 
-                'linkedin': None, 'youtube': None, 'tiktok': None,
-                'whatsapp': None
-            }
-        }
-        
+    def _extract_email_from_website(self, website_url: str, timeout: int = 5) -> Optional[str]:
+        """Extract email from business website."""
         try:
             import requests
             from requests.exceptions import RequestException
             
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
             
-            self.logger.info(f"Visiting website: {website_url}")
             response = requests.get(
                 website_url,
                 headers=headers,
                 timeout=timeout,
                 allow_redirects=True,
-                verify=False  # Sometimes needed for small business sites with bad certs
+                verify=True
             )
             
             if response.status_code == 200:
-                html_content = response.text
-                
-                # 1. Extract Email
                 email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-                emails = re.findall(email_pattern, html_content)
+                emails = re.findall(email_pattern, response.text)
                 
                 filtered = [
                     e for e in emails 
                     if not any(x in e.lower() for x in [
                         'example.com', 'test.com', 'sample.com', 
                         'wix.com', 'wordpress.com', 'yourdomain.com',
-                        'sentry.io', 'privacy@', 'noreply@', '.png', '.jpg', '.jpeg', '.gif'
+                        'sentry.io', 'privacy@', 'noreply@'
                     ])
                 ]
                 
                 if filtered:
-                    details['email'] = filtered[0]
-                
-                # 2. Extract Social Media
-                if BeautifulSoup:
-                    soup = BeautifulSoup(html_content, 'html.parser')
-                    links = soup.find_all('a', href=True)
-                    
-                    for link in links:
-                        href = link['href'].lower()
-                        
-                        if 'facebook.com' in href and not details['social_media']['facebook']:
-                            details['social_media']['facebook'] = link['href']
-                        elif 'instagram.com' in href and not details['social_media']['instagram']:
-                            details['social_media']['instagram'] = link['href']
-                        elif ('twitter.com' in href or 'x.com' in href) and not details['social_media']['twitter']:
-                            details['social_media']['twitter'] = link['href']
-                        elif 'linkedin.com/company' in href or 'linkedin.com/in' in href and not details['social_media']['linkedin']:
-                            details['social_media']['linkedin'] = link['href']
-                        elif 'youtube.com' in href and not details['social_media']['youtube']:
-                            details['social_media']['youtube'] = link['href']
-                        elif 'tiktok.com' in href and not details['social_media']['tiktok']:
-                            details['social_media']['tiktok'] = link['href']
-                        elif ('wa.me' in href or 'api.whatsapp.com' in href or 'whatsapp.com' in href) and not details['social_media']['whatsapp']:
-                            # Extract number from WhatsApp URL
-                            wa_url = link['href']
-                            wa_number = None
-                            
-                            # Case 1: wa.me/NUMBER
-                            wa_match = re.search(r'wa\.me/(\d+)', wa_url)
-                            if wa_match:
-                                wa_number = wa_match.group(1)
-                                
-                            # Case 2: api.whatsapp.com/send?phone=NUMBER
-                            if not wa_number:
-                                wa_match = re.search(r'phone=(\d+)', wa_url)
-                                if wa_match:
-                                    wa_number = wa_match.group(1)
-                                    
-                            # Case 3: whatsapp.com ...
-                            if not wa_number:
-                                wa_match = re.search(r'whatsapp\.com.*?(\d{10,})', wa_url)
-                                if wa_match:
-                                    wa_number = wa_match.group(1)
-                                    
-                            details['social_media']['whatsapp'] = wa_number if wa_number else wa_url
-                else:
-                    # Fallback if BS4 not installed (though we added it)
-                    pass
-                    
-        except Exception as e:
-            self.logger.debug(f"Website extraction error: {e}")
+                    return filtered[0]
+            
+        except:
+            pass
         
-        return details
+        return None
     
     def _safe_extract(self, by: By, selector: str, attribute: str = 'text') -> Optional[str]:
         """Safely extract element content."""

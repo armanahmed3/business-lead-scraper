@@ -12,6 +12,12 @@ import logging
 from pathlib import Path
 from typing import List, Dict
 import pandas as pd
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+except ImportError:
+    gspread = None
+
 
 
 class DataExporter:
@@ -53,6 +59,11 @@ class DataExporter:
                 file_path = self._export_sqlite(data, filename)
             elif fmt == 'excel':
                 file_path = self._export_excel(data, filename)
+            elif fmt == 'google_sheets':
+                # credentials should be passed in config or as extra param
+                # For now, we expect gsheets_creds in config.scraping or passed via extra param
+                creds = self.config._config.get('google_sheets_creds')
+                file_path = self._export_google_sheets(data, filename, creds)
             else:
                 self.logger.warning(f"Unknown format: {fmt}")
                 continue
@@ -388,5 +399,84 @@ class DataExporter:
         writer.close()
         return str(file_path)
     
+    def _export_google_sheets(self, data: List[Dict], filename: str, creds_dict: Dict = None) -> str:
+        """
+        Upload data to a new Google Sheet and return the URL.
+        
+        Args:
+            data: List of business dictionaries
+            filename: Name for the spreadsheet
+            creds_dict: Dictionary containing service account credentials
+            
+        Returns:
+            The URL of the created spreadsheet, or None if failed
+        """
+        if not gspread:
+            self.logger.error("gspread and oauth2client are not installed. Please install them to use Google Sheets export.")
+            return None
+            
+        if not creds_dict:
+            self.logger.warning("Google Sheets credentials not provided. Cannot export to Google Sheets.")
+            return "ERROR: No credentials"
+
+        try:
+            # Define the scope
+            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+            
+            # Authenticate using the credentials dictionary
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            client = gspread.authorize(creds)
+            
+            # Create a new spreadsheet
+            sh = client.create(filename)
+            
+            # Share it with the authorized user if needed, but usually service account is owner
+            # However, to be visible to the user who has the link, we might need to share it
+            # client.insert_permission(sh.id, None, perm_type='anyone', role='writer')
+            sh.share(None, perm_type='anyone', role='writer')
+            
+            worksheet = sh.get_worksheet(0)
+            
+            # Convert data to DataFrame for easier handling
+            df = pd.DataFrame(data)
+            
+            # Rename columns to professional titles (similar to Excel export)
+            col_mapping = {
+                'name': 'Business Name',
+                'category': 'Category',
+                'phone': 'Phone Number',
+                'email': 'Email',
+                'website': 'Website',
+                'address': 'Full Address',
+                'rating': 'Rating',
+                'reviews': 'Review Count',
+                'maps_url': 'Google Maps Link'
+            }
+            df.rename(columns=col_mapping, inplace=True)
+            
+            # List of all headers and data
+            headers = df.columns.tolist()
+            values = df.values.tolist()
+            
+            # Update values
+            worksheet.update([headers] + values)
+            
+            # Format headers
+            worksheet.format("A1:" + gspread.utils.rowcol_to_a1(1, len(headers)), {
+                "backgroundColor": {"red": 0.17, "green": 0.24, "blue": 0.31},
+                "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}
+            })
+            
+            # Resize columns
+            # Worksheet.set_column_width doesn't exist in gspread standard, but we can use batch_update
+            # For simplicity, we skip complex formatting here as it's Google Sheets
+            
+            return sh.url
+            
+        except Exception as e:
+            self.logger.error(f"Failed to export to Google Sheets: {str(e)}")
+            return f"ERROR: {str(e)}"
+
     def _get_center_format(self, workbook):
         return workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'border_color': '#E0E0E0'})
+

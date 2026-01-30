@@ -29,3 +29,8 @@ colorama==0.4.6
 beautifulsoup4
 extra-streamlit-components
 st-gsheets-connection
+gspread
+oauth2client
+plotly
+google-generativeai
+openai
