@@ -1051,32 +1051,36 @@ def email_sender():
     """, unsafe_allow_html=True)
     
     # Dynamic imports for the email system components
+    # We strictly use direct imports because we added the directories to sys.path
     try:
-        # Step 1: Try direct import (assuming 'pages' folder is in sys.path)
-        from lead_management import show_lead_management
-        from email_campaigns import show_email_campaigns
-        from email_tracking import show_email_tracking
-        from data_analytics import show_data_analytics
-        from ai_tools import show_ai_tools
+        # 1. Verify we can see the base modules
         try:
-            from settings import show_settings as show_email_settings
-        except ImportError:
-            show_email_settings = None
-            
-    except ImportError:
-        # Step 2: Try package import (assuming 'Email Sending Stremlit' is in sys.path)
-        try:
-            from pages.lead_management import show_lead_management
-            from pages.email_campaigns import show_email_campaigns
-            from pages.email_tracking import show_email_tracking
-            from pages.data_analytics import show_data_analytics
-            from pages.ai_tools import show_ai_tools
-            from pages.settings import show_settings as show_email_settings
+            import lead_database
         except ImportError as e:
-            st.error(f"❌ Critical Error: Could not load Email System modules.")
-            st.code(f"Sys Path: {sys.path}\nError: {str(e)}")
-            st.warning("Please ensure the 'Email Sending Stremlit' folder exists and contains 'pages' subfolder with correct files.")
+            st.error(f"❌ Email System Error: Could not load core database module. SysPath issue?")
+            st.code(f"Error: {e}")
             return
+
+        # 2. Import the UI components
+        try:
+            from lead_management import show_lead_management
+            from email_campaigns import show_email_campaigns
+            from email_tracking import show_email_tracking
+            from data_analytics import show_data_analytics
+            from ai_tools import show_ai_tools
+            try:
+                from settings import show_settings as show_email_settings
+            except ImportError:
+                show_email_settings = None
+        except ImportError as e:
+            st.error(f"❌ Email System Error: Could not load UI pages.")
+            st.code(f"Error: {e}\n\nMake sure the 'pages' folder is in sys.path.")
+            return
+
+    except Exception as e:
+        st.error(f"❌ Critical Error: Unexpected error loading Email System.")
+        st.info(f"Details: {str(e)}")
+        return
 
     # Create tabs for the complete system
     email_tabs = st.tabs([
