@@ -22,6 +22,7 @@ from selenium_scraper import SeleniumScraper
 from exporter import DataExporter
 from dedupe import Deduplicator
 from robots_checker import RobotsChecker
+from ai_manager import global_settings_page
 import extra_streamlit_components as stx
 from datetime import timedelta
 import sys
@@ -93,6 +94,9 @@ class DBHandler:
                             'active': 1, 
                             'created_at': datetime.now().isoformat(),
                             'openrouter_key': "",
+                            'aimlapi_key': "",
+                            'bytez_key': "", 
+                            'default_provider': 'openrouter',
                             'smtp_user': "",
                             'smtp_pass': "",
                             'gsheets_creds': "",
@@ -119,6 +123,24 @@ class DBHandler:
             # Migration for existing DBs
             try:
                 c.execute("ALTER TABLE users ADD COLUMN openrouter_key TEXT")
+            except sqlite3.OperationalError: pass
+
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN aimlapi_key TEXT")
+            except sqlite3.OperationalError: pass
+
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN bytez_key TEXT")
+            except sqlite3.OperationalError: pass
+
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN default_provider TEXT DEFAULT 'openrouter'")
+            except sqlite3.OperationalError: pass
+            
+            # Clean up old provider columns if they exist
+            try:
+                # We can't directly DROP COLUMN in SQLite, so we'll just ignore these columns
+                pass
             except sqlite3.OperationalError: pass
             
             try:
@@ -171,13 +193,16 @@ class DBHandler:
                 df = self.conn.read(ttl=0)
                 user = df[df['username'] == username]
                 if not user.empty:
-                    # Return tuple like sqlite: (password, role, active, openrouter_key, smtp_user, smtp_pass, gsheets_creds, plan, usage_count, usage_limit)
+                    # Return tuple like sqlite
                     row = user.iloc[0]
                     return (
                         row.get('password', ""), 
                         row.get('role', 'user'), 
                         row.get('active', 1), 
                         row.get('openrouter_key', ""),
+                        row.get('aimlapi_key', ""),
+                        row.get('bytez_key', ""),
+                        row.get('default_provider', "openrouter"),
                         row.get('smtp_user', ""),
                         row.get('smtp_pass', ""),
                         row.get('gsheets_creds', ""),
@@ -193,7 +218,8 @@ class DBHandler:
         else:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("SELECT password, role, active, openrouter_key, smtp_user, smtp_pass, gsheets_creds, plan, usage_count, usage_limit, email_count, email_limit FROM users WHERE username=?", (username,))
+            # Ensure calling code expects the new tuple size or handle it dynamically
+            c.execute("SELECT password, role, active, openrouter_key, default_provider, smtp_user, smtp_pass, gsheets_creds, plan, usage_count, usage_limit, email_count, email_limit FROM users WHERE username=?", (username,))
             result = c.fetchone()
             conn.close()
             return result
@@ -216,7 +242,7 @@ class DBHandler:
                 c = conn.cursor()
                 for key, value in settings_dict.items():
                     # Sanitize key name for SQL injection prevention
-                    if key in ['openrouter_key', 'smtp_user', 'smtp_pass', 'gsheets_creds', 'plan', 'usage_count', 'usage_limit', 'email_count', 'email_limit']:
+                    if key in ['openrouter_key', 'default_provider', 'smtp_user', 'smtp_pass', 'gsheets_creds', 'plan', 'usage_count', 'usage_limit', 'email_count', 'email_limit']:
                         c.execute(f"UPDATE users SET {key} = ? WHERE username = ?", (value, username))
                 conn.commit()
                 conn.close()
@@ -224,24 +250,8 @@ class DBHandler:
             except: return False
 
     def update_api_key(self, username, key):
-        if self.use_gsheets:
-            try:
-                df = self.conn.read(ttl=0)
-                if 'openrouter_key' not in df.columns:
-                    df['openrouter_key'] = ""
-                df.loc[df['username'] == username, 'openrouter_key'] = key
-                self.conn.update(data=df)
-                return True
-            except: return False
-        else:
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute("UPDATE users SET openrouter_key = ? WHERE username = ?", (key, username))
-                conn.commit()
-                conn.close()
-                return True
-            except: return False
+        # Legacy support for openrouter logic only - generally use update_settings now
+        return self.update_settings(username, {'openrouter_key': key})
 
     def migrate_to_gsheets(self):
         """Copies users from SQLite to Google Sheets if GSheets is connected."""
@@ -269,6 +279,9 @@ class DBHandler:
                         'active': row.get('active', 1),
                         'created_at': datetime.now().isoformat(),
                         'openrouter_key': row.get('openrouter_key', ''),
+                        'aimlapi_key': row.get('aimlapi_key', ''),
+                        'bytez_key': row.get('bytez_key', ''),
+                        'default_provider': row.get('default_provider', 'aimlapi'),
                         'smtp_user': row.get('smtp_user', ''),
                         'smtp_pass': row.get('smtp_pass', ''),
                         'gsheets_creds': row.get('gsheets_creds', ''),
@@ -292,7 +305,8 @@ class DBHandler:
                 
         except Exception as e:
             return False, f"Migration Failed: {str(e)}"
-
+    
+    # get_all_users remains mostly same but we only select specific columns anyway
     def get_all_users(self):
         if self.use_gsheets:
             try:
@@ -327,6 +341,7 @@ class DBHandler:
                     'active': 1, 
                     'created_at': datetime.now().isoformat(),
                     'openrouter_key': "",
+                    'default_provider': 'openrouter',
                     'smtp_user': "",
                     'smtp_pass': "",
                     'gsheets_creds': "",
@@ -350,10 +365,8 @@ class DBHandler:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             try:
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute("INSERT INTO users (username, password, role, active, plan, usage_count, usage_limit) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                          (username, hashed, role, 1, "free", 0, 50))
+                c.execute("INSERT INTO users (username, password, role, active, plan, usage_count, usage_limit, default_provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          (username, hashed, role, 1, "free", 0, 50, 'openrouter'))
                 conn.commit()
                 return True
             except sqlite3.IntegrityError:
@@ -365,9 +378,15 @@ class DBHandler:
         if self.use_gsheets:
             try:
                 df = self.conn.read(ttl=0)
+                if df.empty: return False
+                
+                # Make a true copy to avoid view warnings/issues
+                df = df.copy()
+                
                 mask = df['username'] == username
                 if not mask.any(): return False
                 
+                # Careful updating
                 if new_password:
                     df.loc[mask, 'password'] = hash_password(new_password)
                 if new_role:
@@ -380,11 +399,14 @@ class DBHandler:
                     df.loc[mask, 'usage_limit'] = int(usage_limit)
                 if email_limit is not None:
                     df.loc[mask, 'email_limit'] = int(email_limit)
-                    
+                
+                # Ensure we are writing back the FULL dataframe
+                # Some GSheets connectors behave oddly if you pass a subset or view
                 self.conn.update(data=df)
                 return True
             except Exception as e:
                 print(f"Update Error: {e}")
+                st.error(f"Database Error: {str(e)}")
                 return False
         else:
             try:
@@ -482,8 +504,8 @@ def authenticate_user(username, password):
     result = db.get_user(username)
     
     if result:
-        # result = (password, role, active, openrouter_key, smtp_user, smtp_pass, gsheets_creds, plan, usage_count, usage_limit, email_count, email_limit)
-        stored_password, role, active, openrouter_key, smtp_user, smtp_pass, gsheets_creds, plan, usage_count, usage_limit, email_count, email_limit = result
+        # result = (password, role, active, openrouter_key, default_provider, smtp_user, smtp_pass, gsheets_creds, plan, usage_count, usage_limit, email_count, email_limit)
+        stored_password, role, active, openrouter_key, default_provider, smtp_user, smtp_pass, gsheets_creds, plan, usage_count, usage_limit, email_count, email_limit = result
         # Robust boolean conversion
         if isinstance(active, str):
             if active.lower() in ['true', '1', 'yes']:
@@ -502,6 +524,8 @@ def authenticate_user(username, password):
             if active_bool:
                 st.session_state.username = username
                 st.session_state.openrouter_api_key = openrouter_key if openrouter_key else ""
+                st.session_state.default_provider = default_provider if default_provider else "openrouter"
+
                 st.session_state.smtp_user = smtp_user if smtp_user else ""
                 st.session_state.smtp_pass = smtp_pass if smtp_pass else ""
                 try:
@@ -541,6 +565,8 @@ def authenticate_user(username, password):
                  if active_bool:
                     st.session_state.username = username
                     st.session_state.openrouter_api_key = openrouter_key if openrouter_key else ""
+                    st.session_state.default_provider = default_provider if default_provider else "openrouter"
+
                     st.session_state.smtp_user = smtp_user if smtp_user else ""
                     st.session_state.smtp_pass = smtp_pass if smtp_pass else ""
                     try:
@@ -1024,7 +1050,7 @@ def user_panel():
     """, unsafe_allow_html=True)
     
     # Navigation tabs
-    tab_names = ["🏠 Dashboard", "🌍 Google Maps", "📧 Email Sender", "💰 Price Estimator", "🕵️ Lead Enrichment", "🏢 Competitor Intel"]
+    tab_names = ["🏠 Dashboard", "🌍 Google Maps", "📧 Email Sender", "💰 Price Estimator", "🕵️ Lead Enrichment", "🏢 Competitor Intel", "🧠 AI Settings"]
     tabs = st.tabs(tab_names)
     
     for i, tab_name in enumerate(tab_names):
@@ -1041,6 +1067,10 @@ def user_panel():
                 lead_enrichment_tool()
             elif tab_name == "🏢 Competitor Intel":
                 competitor_intelligence_tool()
+            elif tab_name == "🧠 AI Settings":
+                st.header("🧠 AI Provider Configuration")
+                st.markdown("Configure your AI powerhouses and application preferences here. Keys are saved securely for your lifetime access.")
+                global_settings_page(db)
 
 def email_sender():
     st.markdown("""
@@ -1205,47 +1235,37 @@ def email_sender():
         st.divider()
         st.markdown("#### ⚙️ Additional Email Settings")
         show_email_settings()
+        
+        st.divider()
+        st.markdown("#### 🧠 AI Provider Settings")
+        # Show global settings for AI providers
+        global_settings_page(db)
     
 
 def price_estimator():
     st.markdown("""
         <div style="background-color: #2c3e50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
-            <h2 style="color: white; margin: 0;">💰 Lifetime Free Price Estimator</h2>
-            <p style="color: #bdc3c7;">Generate detailed, professional service quotes with OpenRouter integration. No free tier limits!</p>
+            <h2 style="color: white; margin: 0;">💰 Premium AI Price Estimator</h2>
+            <p style="color: #bdc3c7;">Generate high-ticket, detailed professional service quotes using your selected AI provider. Enterprise-grade estimation.</p>
         </div>
     """, unsafe_allow_html=True)
-    
-    # API Key Configuration
-    if 'openrouter_api_key' not in st.session_state:
-        st.session_state.openrouter_api_key = ""
     
     # SaaS Plan Display
     user_plan = st.session_state.get('user_plan', 'free').upper()
     is_unlimited = (user_plan == 'ENTERPRISE' or st.session_state.get('user_role') == 'admin')
-    st.info(f"💼 Business Logic Engine - Status: {'💎 UNLIMITED' if is_unlimited else user_plan}")
+    current_provider = st.session_state.get('default_provider', 'openrouter')
+    st.info(f"💼 Business Logic Engine - Status: {'💎 UNLIMITED' if is_unlimited else user_plan} | 🤖 AI Provider: {current_provider.upper()}")
     
-    with st.expander("🔑 OpenRouter API Configuration", expanded=not st.session_state.openrouter_api_key):
-        api_key = st.text_input("OpenRouter API Key", 
-                               value=st.session_state.openrouter_api_key,
-                               type="password", 
-                               help="Get your free API key at https://openrouter.ai")
-        
-        col_save, col_clear = st.columns([1, 1])
-        with col_save:
-            if st.button("💾 Save Key", use_container_width=True):
-                if api_key:
-                    st.session_state.openrouter_api_key = api_key
-                    st.success("✅ API Key saved for this session!")
-                else:
-                    st.warning("Please enter a key first.")
-        
-        with col_clear:
-            if st.button("🗑️ Clear Key", use_container_width=True):
-                st.session_state.openrouter_api_key = ""
-                st.rerun()
+    # Check if user has configured their API keys
+    provider_keys = {
+        'openrouter': st.session_state.get('openrouter_api_key', '')
+    }
     
-    if not st.session_state.openrouter_api_key:
-        st.info("Please enter your OpenRouter API key to proceed.")
+    current_provider_key = provider_keys.get(current_provider, '')
+    
+    if not current_provider_key:
+        st.warning(f"⚠️ Please configure your {current_provider.upper()} API key in the Settings page first.")
+        st.info("Navigate to Settings tab to add your API keys. They are saved persistently for your account.")
         return
     
     # Client Requirements
@@ -1257,126 +1277,137 @@ def price_estimator():
     # Model Selection
     col1, col2 = st.columns(2)
     with col1:
-        # Plan Based Model Restriction
-        user_plan = st.session_state.get('user_plan', 'free').lower()
-        is_unlimited = (user_plan == 'enterprise' or st.session_state.get('user_role') == 'admin')
-        
-        if not is_unlimited and user_plan == 'free':
-            model_options = {
-                "Google: Gemma 2 9B (Free)": "google/gemma-2-9b-it:free",
-                "Meta: Llama 3.1 8B (Free)": "meta-llama/llama-3.1-8b-instruct:free",
-            }
-            st.warning("⭐ Upgrade to PRO for 10x more powerful AI models! Contact: 03213809420 | titechagency@gmail.com")
-            if st.button("Upgrade via WhatsApp 💎", key="upgrade_price_estimator"):
-                st.markdown('<a href="https://wa.me/923213809420" target="_blank">Chat on WhatsApp</a>', unsafe_allow_html=True)
-        else:
-            model_options = {
-                "🌟 Auto-Select Best Free Model": "auto",
-                "Google: Gemma 3 12B (Free)": "google/gemma-3-12b:free",
-                "Google: Gemma 2 9B (Free)": "google/gemma-2-9b-it:free",
-                "Meta: Llama 3.1 405B (Free)": "meta-llama/llama-3.1-405b-instruct:free",
-                "Meta: Llama 3.1 70B (Free)": "meta-llama/llama-3.1-70b-instruct:free",
-                "Meta: Llama 3.1 8B (Free)": "meta-llama/llama-3.1-8b-instruct:free",
-                "DeepSeek: DeepSeek-V3 (Free)": "deepseek/deepseek-chat:free",
-                "OpenRouter Auto (Smart)": "openrouter/auto"
-            }
-        
+        # Generic model selection that works across providers
+        model_options = {
+            "GPT-4o (Best Quality)": "gpt-4o",
+            "Llama 3.1 405B (High End)": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+            "Llama 3.1 70B (Fast & Good)": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+            "GPT-3.5 Turbo (Standard)": "gpt-3.5-turbo",
+            "Default (Provider Specific)": "default",
+        }
+            
         selected_model_name = st.selectbox("AI Model", list(model_options.keys()))
         selected_model = model_options[selected_model_name]
         
-        if selected_model == "auto":
-            # Priority logic for best free models
-            best_free_models = [
-                "meta-llama/llama-3.1-405b-instruct:free",
-                "google/gemma-3-12b:free",
-                "deepseek/deepseek-chat:free"
-            ]
-            selected_model = best_free_models[0] # Default to top priority
-            st.caption(f"🚀 Auto-selected: `{selected_model}`")
-    
     with col2:
         currency = st.selectbox("Currency", ["USD ($)", "EUR (€)", "GBP (£)", "PKR (Rs.)", "INR (₹)"])
-    
+        
     # Generate Quote
     if st.button("📊 Generate Professional Quote", use_container_width=True):
         if not client_req:
             st.error("❌ Please enter client requirements!")
             return
-            
-        with st.spinner("🚀 AI is analyzing requirements and generating a professional quote..."):
-            try:
-                prompt = f"""
-                You are a senior project manager and lead consultant at a world-class software development agency. 
-                Analyze the following client requirements and provide a detailed, professional price estimation in {currency}.
                 
+        with st.spinner("🚀 AI is analyzing requirements and generating a premium quote..."):
+            try:
+                # UPDATED PROMPT FOR HIGH PRICE AND PROFESSIONAL ENGAGING MESSAGE
+                prompt = f"""
+                You are a senior partner and elite sales strategist at a top-tier global digital agency.
+                Your task is to create a DETAILED, EXTENSIVE, and HIGH-VALUE project estimation proposal.
+                    
                 CLIENT REQUIREMENTS:
                 {client_req}
-                
-                GUIDELINES:
-                1. Professional Tone: Use sophisticated business language
-                2. Detailed Breakdown:
-                   - Discovery & Strategy
-                   - UI/UX Design
-                   - Development (Frontend & Backend)
-                   - Quality Assurance
-                   - Deployment
-                   - Support & Maintenance
-                3. Itemized Pricing: Provide detailed costs for each component
-                4. Premium Pricing: Reflect high-end agency standards
-                5. Value Proposition: Explain why each phase is critical
-                6. Timeline: Estimate professional delivery timeline
-                7. Total Investment: Clear total range at the end
-                8. Formatting: Use headings, bold text, bullet points, and tables
-                
-                Act as if you are closing a high-ticket deal. Be authoritative and detailed.
-                """
-                
-                response = requests.post(
-                    url="https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {st.session_state.openrouter_api_key}",
-                        "HTTP-Referer": "http://localhost:8501",
-                        "X-Title": "Lead Scraper Pro Price Estimator",
-                    },
-                    json={
-                        "model": selected_model,
-                        "messages": [
-                            {"role": "system", "content": "You are an elite business consultant and senior project estimator."},
-                            {"role": "user", "content": prompt}
-                        ]
-                    }
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if 'choices' in result and len(result['choices']) > 0:
-                        quote = result['choices'][0]['message']['content']
-                        st.success("✅ Quote generated successfully!")
-                        st.markdown("---")
-                        st.markdown(quote)
-                        
-                        # Download option
-                        st.markdown("---")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.download_button(
-                                label="💾 Download as Text",
-                                data=quote,
-                                file_name=f"quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                                mime="text/plain"
-                            )
-                        with col2:
-                            st.download_button(
-                                label="📄 Download as Markdown",
-                                data=quote,
-                                file_name=f"quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                                mime="text/markdown"
-                            )
-                    else:
-                        st.error("❌ Failed to generate quote. Please try again.")
-                else:
-                    st.error(f"❌ API Error: {response.status_code} - {response.text}")
                     
+                CRITICAL INSTRUCTIONS:
+                1. **PRICING STRATEGY**: 
+                   - The price MUST be premium/high-ticket. Do not underprice. 
+                   - This is for a high-end client who values quality over cost.
+                   - Add separate line items for "Project Management", "Quality Assurance", and "Post-Launch Support" to justify value.
+                   - Total estimate should be significantly above average market freelancer rates (think Agency rates).
+                    
+                2. **TONE & STYLE**: 
+                   - Extremely professional, confident, and persuasive.
+                   - Engaging and client-centric language (e.g., "We will ensure...", "Your success...").
+                   - Use sophisticated vocabulary but remain clear.
+                    
+                3. **STRUCTURE**:
+                   - **Executive Summary**: Brief engaging overview.
+                   - **Scope of Work**: Detailed breakdown of phases (Discovery, Design, Dev, QA, Deployment).
+                   - **Investment Breakdown**: Detailed table with premium pricing in {currency}.
+                   - **Timeline**: Realistic but generous timeline (add buffer).
+                   - **Why Us?**: A concluding section selling the value proposition.
+    
+                4. **Formatting**: Use Markdown with headers (##), Bold (**), Bullet points, and Tables.
+                    
+                Act as if you are closing a $10k+ to $100k+ deal (scale appropriately based on project size but always aim high).
+                """
+                    
+                # Use the unified AI client that respects the user's selected provider
+                from ai_manager import query_ai_model
+                ai_response = query_ai_model(
+                    prompt=prompt,
+                    system_role="You are an elite business consultant, skilled in high-ticket sales and technical project estimation.",
+                    model=selected_model,
+                    temperature=0.7
+                )
+                    
+                if 'error' in ai_response:
+                    st.error(f"❌ AI Error: {ai_response['error']}")
+                else:
+                    quote = ai_response['content']
+                    st.success("✅ Premium Quote generated successfully!")
+                    st.markdown("---")
+                    st.markdown(quote)
+                        
+                    # Download option
+                    st.markdown("---")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.download_button(
+                            label="💾 Download as Text",
+                            data=quote,
+                            file_name=f"premium_quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                            mime="text/plain"
+                        )
+                    with col2:
+                        st.download_button(
+                            label="📄 Download as Markdown",
+                            data=quote,
+                            file_name=f"premium_quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                            mime="text/markdown"
+                        )
+                    with col3:
+                        # Convert markdown to PDF using a library like fpdf2
+                        try:
+                            from fpdf import FPDF
+                            import html
+                            
+                            # Create PDF
+                            pdf = FPDF()
+                            pdf.set_auto_page_break(auto=True, margin=15)
+                            pdf.add_page()
+                            pdf.set_font('Arial', '', 12)
+                            
+                            # Add content to PDF
+                            # Split the quote into lines and add each line to the PDF
+                            lines = quote.split('\n')
+                            for line in lines:
+                                # Remove markdown formatting for PDF
+                                clean_line = line.replace('**', '').replace('*', '').replace('#', '')
+                                # Handle potential encoding issues
+                                clean_line = html.unescape(clean_line)
+                                
+                                # Add the line to PDF (encode to handle special characters)
+                                try:
+                                    pdf.cell(0, 10, clean_line[:180], ln=True)  # Limit line length
+                                except:
+                                    # Fallback: encode and decode to handle special characters
+                                    safe_line = clean_line.encode('utf-8', errors='ignore').decode('utf-8')
+                                    pdf.cell(0, 10, safe_line[:180], ln=True)
+                            
+                            # Get PDF as bytes
+                            pdf_bytes = pdf.output(dest='S').encode('latin-1')
+                            
+                            st.download_button(
+                                label="📑 Download as PDF",
+                                data=pdf_bytes,
+                                file_name=f"premium_quote_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                mime="application/pdf"
+                            )
+                        except ImportError:
+                            st.info("Install fpdf2 package to enable PDF downloads: pip install fpdf2")
+                        except Exception as e:
+                            st.warning(f"PDF generation failed: {str(e)}")
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
 
@@ -1550,7 +1581,7 @@ def lead_enrichment_tool():
     st.markdown("""
 <div style="background: linear-gradient(135deg, #12c2e9, #c471ed, #f64f59); padding: 25px; border-radius: 15px; margin-bottom: 25px; color: white;">
     <h2>🕵️ AI Lead Enrichment Hub</h2>
-    <p>Transform raw lead data into high-value prospects with deep AI research.</p>
+    <p>Transform raw lead data into high-value prospects with deep AI research (Powered by OpenRouter).</p>
 </div>
     """, unsafe_allow_html=True)
     
@@ -1560,7 +1591,20 @@ def lead_enrichment_tool():
     if not is_unlimited and user_plan == 'free':
         st.warning("🔒 **PRO/ENTERPRISE ONLY**: Lead enrichment requires a premium plan.")
         if st.button("Unlock Deep Research Now 🚀", use_container_width=True):
-            st.balloons()
+            st.markdown('<a href="https://wa.me/923213809420" target="_blank">Chat on WhatsApp</a>', unsafe_allow_html=True)
+        return
+
+    # Check if user has configured their OpenRouter API key
+    current_provider = st.session_state.get('default_provider', 'openrouter')
+    provider_keys = {
+        'openrouter': st.session_state.get('openrouter_api_key', '')
+    }
+    
+    current_provider_key = provider_keys.get(current_provider, '')
+    
+    if not current_provider_key:
+        st.warning(f"⚠️ Please configure your {current_provider.upper()} API key in the Settings page first.")
+        st.info("Navigate to Settings tab to add your API keys. They are saved persistently for your account.")
         return
 
     col1, col2 = st.columns([1, 1])
@@ -1578,39 +1622,26 @@ def lead_enrichment_tool():
             return
             
         with st.spinner(f"🤖 AI Agent is performing {research_depth} scan of {lead_name}..."):
-            api_key = st.session_state.get('openrouter_api_key', '')
-            if not api_key:
-                st.error("OpenRouter API key required for AI research.")
-                return
             
-            prompt = f"Perform a {research_depth} analysis of the company {lead_name} ({lead_website}). Focus on: {', '.join(focus_areas)}. Find social media links and key people."
+            prompt = f"Perform a {research_depth} analysis of the company {lead_name} ({lead_website}). Focus on: {', '.join(focus_areas)}. Find social media links and key people. Return a structured report."
             
             try:
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "HTTP-Referer": "http://localhost:8501",
-                    "X-Title": "Lead Scraper Pro",
-                    "Content-Type": "application/json"
-                }
-                response = requests.post(
-                    url="https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json={
-                        "model": "google/gemma-3-12b:free",
-                        "messages": [{"role": "user", "content": prompt}]
-                    },
-                    timeout=60
+                # Use the unified AI client
+                from ai_manager import query_ai_model
+                result = query_ai_model(
+                    prompt=prompt,
+                    system_role="You are an elite business intelligence analyst specializing in corporate research and competitive analysis.",
+                    model=None,  # Use default model for the provider
+                    temperature=0.5
                 )
-                if response.status_code == 200:
-                    data = response.json()
-                    result = data['choices'][0]['message']['content']
+                
+                if "error" in result:
+                    st.error(f"❌ AI Research failed: {result['error']}")
+                    st.info("💡 Tip: Check your API key in Settings or try selecting a different provider.")
+                else:
                     st.success("✅ Enrichment Complete!")
                     st.markdown("### 📋 AI Research Report")
-                    st.markdown(result)
-                else:
-                    error_data = response.json() if response.status_code != 404 else {"error": {"message": "Model not found or API endpoint invalid."}}
-                    st.error(f"AI Research failed (Status {response.status_code}): {error_data.get('error', {}).get('message', 'Unknown Error')}")
-                    st.info("💡 Tip: Ensure your API key is correct and has a balance (if required) or try a different free model.")
+                    st.markdown(result['content'])
             except Exception as e:
                 st.error(f"System Error: {e}")
 
@@ -1618,7 +1649,7 @@ def competitor_intelligence_tool():
     st.markdown("""
 <div style="background: linear-gradient(135deg, #000428, #004e92); padding: 25px; border-radius: 15px; margin-bottom: 25px; color: white; border-left: 5px solid #00f2fe;">
     <h2>🏢 Competitor Intelligence Studio</h2>
-    <p>Get the inside track on any business. SWOT analysis, Market cap, and Growth strategy.</p>
+    <p>Get the inside track on any business. SWOT analysis, Market cap, and Growth strategy (Powered by AIMLAPI).</p>
 </div>
     """, unsafe_allow_html=True)
 
@@ -1641,39 +1672,46 @@ def competitor_intelligence_tool():
         """, unsafe_allow_html=True)
         return
 
+    # Check if user has configured their OpenRouter API key
+    current_provider = st.session_state.get('default_provider', 'openrouter')
+    provider_keys = {
+        'openrouter': st.session_state.get('openrouter_api_key', '')
+    }
+    
+    current_provider_key = provider_keys.get(current_provider, '')
+
+    if not current_provider_key:
+        st.warning(f"⚠️ Please configure your {current_provider.upper()} API key in the Settings page first.")
+        st.info("Navigate to Settings tab to add your API keys. They are saved persistently for your account.")
+        return
+
     target = st.text_input("Target Competitor Name", placeholder="e.g. Apple Inc")
     if st.button("🔥 Generate Strategic Breakdown", use_container_width=True):
+        if not target:
+            st.error("Please enter a target name.")
+            return
+            
         with st.spinner(f"🛰️ Satellites scanning {target} operations..."):
-            api_key = st.session_state.get('openrouter_api_key', '')
-            prompt = f"Provide a complete strategic intelligence report for {target}. Include: SWOT analysis, estimated market share, key competitors, and main growth hurdles."
+            prompt = f"Provide a complete strategic intelligence report for {target}. Include: SWOT analysis, estimated market share, key competitors, and main growth hurdles. Format as a professional business report."
             
             try:
-                 headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "HTTP-Referer": "http://localhost:8501",
-                    "X-Title": "Lead Scraper Pro Intelligence",
-                    "Content-Type": "application/json"
-                 }
-                 response = requests.post(
-                    url="https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json={
-                        "model": "meta-llama/llama-3.1-405b-instruct:free",
-                        "messages": [{"role": "user", "content": prompt}]
-                    },
-                    timeout=60
+                # Use the unified AI client
+                from ai_manager import query_ai_model
+                result = query_ai_model(
+                    prompt=prompt,
+                    system_role="You are a strategic business intelligence expert specializing in competitive analysis and market research.",
+                    model=None,  # Use default model for the provider
+                    temperature=0.5
                 )
-                 if response.status_code == 200:
-                    res = response.json()['choices'][0]['message']['content']
+                
+                if "error" in result:
+                    st.error(f"❌ AI Research failed: {result['error']}")
+                    st.info("💡 Tip: Check your API key in Settings or try selecting a different provider.")
+                else:
                     st.markdown("### 📊 Strategic Intelligence Report")
-                    st.markdown(res)
-                 else:
-                    error_msg = response.text
-                    try: error_msg = response.json().get('error', {}).get('message', response.text)
-                    except: pass
-                    st.error(f"Access Denied or API Error ({response.status_code}): {error_msg}")
+                    st.markdown(result['content'])
             except Exception as e:
-                 st.error(f"System Failure: {e}")
+                st.error(f"System Failure: {e}")
 
 def main():
     # Handle Tracking Requests first (Real-time Email Tracking)
@@ -1830,18 +1868,20 @@ def main():
                 st.rerun()
             
             # Navigation Choices
-            nav_options = ["🏠 Home / Scraper", "📧 Email Sender", "💰 Price Estimator"]
+            nav_options = ["🏠 Home / Scraper", "📧 Email Sender", "💰 Price Estimator", "⚙️ Settings"]
             if st.session_state.user_role == 'admin':
                 nav_options.append("🛡️ Admin Panel")
             
             # Find current index
             current_tab = st.session_state.get('current_tab', 'user')
-            if current_tab == 'admin':
+            if current_tab == 'admin' and "🛡️ Admin Panel" in nav_options:
                 default_idx = nav_options.index("🛡️ Admin Panel")
             elif current_tab == 'estimator':
                 default_idx = nav_options.index("💰 Price Estimator")
             elif current_tab == 'email':
                 default_idx = nav_options.index("📧 Email Sender")
+            elif current_tab == 'settings':
+                default_idx = nav_options.index("⚙️ Settings")
             else:
                 default_idx = 0
 
@@ -1858,6 +1898,8 @@ def main():
                 st.session_state.current_tab = 'estimator'
             elif nav_selection == "📧 Email Sender":
                 st.session_state.current_tab = 'email'
+            elif nav_selection == "⚙️ Settings":
+                st.session_state.current_tab = 'settings'
             else:
                 st.session_state.current_tab = 'user'
             
@@ -1884,6 +1926,10 @@ def main():
             price_estimator()
         elif st.session_state.get('current_tab') == 'email':
             email_sender()
+        elif st.session_state.get('current_tab') == 'settings':
+            st.header("🧠 AI Provider Configuration")
+            st.markdown("Configure your AI powerhouses and application preferences here. Keys are saved securely for your lifetime access.")
+            global_settings_page(db)
         else:
             user_panel()
 
