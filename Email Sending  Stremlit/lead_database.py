@@ -115,12 +115,21 @@ class LeadDatabase:
     
     def search_leads(self, query: str) -> List[Dict]:
         """Search leads by name, email, or company"""
-        query = query.lower()
+        if not query:
+            return self.leads
+            
         results = []
+        query = query.lower()
+        
         for lead in self.leads:
-            if (query in lead['name'].lower() or 
-                query in lead['email'].lower() or 
-                query in lead['company'].lower()):
+            # Ensure all fields are strings before calling .lower()
+            name = str(lead.get('name', '')) if lead.get('name') is not None else ''
+            email = str(lead.get('email', '')) if lead.get('email') is not None else ''
+            company = str(lead.get('company', '')) if lead.get('company') is not None else ''
+            
+            if (query in name.lower() or 
+                query in email.lower() or 
+                query in company.lower()):
                 results.append(lead)
         return results
     
