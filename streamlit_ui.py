@@ -200,8 +200,6 @@ class DBHandler:
                         row.get('role', 'user'), 
                         row.get('active', 1), 
                         row.get('openrouter_key', ""),
-                        row.get('aimlapi_key', ""),
-                        row.get('bytez_key', ""),
                         row.get('default_provider', "openrouter"),
                         row.get('smtp_user', ""),
                         row.get('smtp_pass', ""),
