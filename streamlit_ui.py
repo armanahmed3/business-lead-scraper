@@ -1468,13 +1468,54 @@ def google_maps_scraping():
             
             status_text.markdown("### 🔄 Initializing Advanced Scraper...")
             
-            # Initialize scraper
-            scraper = SeleniumScraper(
-                config=config,
-                headless=not st.checkbox("Debug Mode (Show Browser)", value=False),
-                guest_mode=True,
-                delay=delay
-            )
+            # Initialize scraper with error handling
+            try:
+                scraper = SeleniumScraper(
+                    config=config,
+                    headless=not st.checkbox("Debug Mode (Show Browser)", value=False),
+                    guest_mode=True,
+                    delay=delay
+                )
+                
+                # Check if scraper is properly initialized
+                if not hasattr(scraper, 'chrome_available') or not scraper.chrome_available:
+                    status_text.markdown("### ⚠️ Chrome Not Available - Using Demo Mode")
+                    st.info("🌐 **Chrome browser not available in this environment**\n\n"
+                           "This is common in cloud deployments. The app will now demonstrate functionality with sample data.\n\n"
+                           "**For full functionality:**\n"
+                           "- Run locally with Chrome installed\n"
+                           "- Or deploy to a Chrome-compatible environment")
+            except Exception as e:
+                status_text.markdown("### ⚠️ Scraper Initialization Failed")
+                st.error(f"Failed to initialize scraper: {str(e)}")
+                st.info("🌐 **Using demo mode with sample data**")
+                # Create a minimal scraper object for demo purposes
+                from selenium_scraper import SeleniumScraper
+                demo_scraper = SeleniumScraper.__new__(SeleniumScraper)
+                demo_scraper.chrome_available = False
+                demo_scraper.config = config
+                demo_scraper._get_mock_data = lambda q, l, max_results: [
+                    {
+                        'place_id': f'demo_place_{q}_{l}_{i}',
+                        'name': f'Demo Business {i+1}',
+                        'address': f'{i+100} Demo St, {l}',
+                        'phone': f'+1-555-{i:04d}',
+                        'email': f'contact{i+1}@demo{q.lower().replace(" ", "")}.com',
+                        'website': f'https://demo{i+1}{q.lower().replace(" ", "")}.com',
+                        'category': 'Demo Business',
+                        'rating': round(3.5 + (i % 5) * 0.3, 1),
+                        'reviews': 10 + i * 7,
+                        'latitude': 40.7128 + (i * 0.01),
+                        'longitude': -74.0060 + (i * 0.01),
+                        'maps_url': f'https://maps.google.com/?q=demo+{q}+{l}+{i+1}',
+                        'source_url': f'https://maps.google.com/?q=demo+{q}+{l}+{i+1}',
+                        'timestamp': datetime.now().isoformat(),
+                        'labels': None
+                    } for i in range(min(5, max_results))
+                ]
+                demo_scraper.scrape_google_maps = lambda q, l, max_results: demo_scraper._get_mock_data(q, l, max_results)
+                demo_scraper.close = lambda: None
+                scraper = demo_scraper
             
             status_text.markdown(f"### 🔍 Searching for **{query}** in **{location}**...")
             progress_bar.progress(10)

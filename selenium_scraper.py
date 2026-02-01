@@ -166,20 +166,31 @@ class SeleniumScraper:
             print("⚠️  Warning: Chrome/Chromium not found on system.")
             print("   This may cause issues in deployment environments like Streamlit Cloud.")
             print("   Consider using alternative scraping methods for deployment.")
+            # Don't raise exception here - let the scraper initialize but mark as unavailable
+            self.chrome_available = False
+            self.driver = None
+            self.wait = None
+            return
         
+        self.chrome_available = True
         try:
             self._setup_driver()
         except Exception as e:
             self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
+            self.chrome_available = False
+            self.driver = None
+            self.wait = None
             if "Streamlit" in str(type(sys.modules.get('streamlit', ''))):
                 # We're in Streamlit environment
                 print("\n🚨 Google Maps scraping requires Chrome browser and may not work in cloud deployment environments.")
                 print("   For local use: Install Chrome browser and run locally.")
                 print("   For cloud deployment: Consider using alternative data sources.\n")
-            raise
+            # Don't raise exception - allow app to continue with mock data
         except SystemExit:
             # Handle system exit exceptions
-            pass
+            self.chrome_available = False
+            self.driver = None
+            self.wait = None
     
     def _setup_driver(self):
         """Set up Chrome WebDriver with appropriate options."""
@@ -187,6 +198,7 @@ class SeleniumScraper:
         
         # Check if in cloud environment and Chrome is unavailable
         if is_running_in_cloud_environment() and not is_chrome_available():
+            self.logger.error("Chrome not available in cloud environment")
             raise WebDriverException("Chrome not available in cloud environment")
         
         options = webdriver.ChromeOptions()
@@ -315,11 +327,17 @@ class SeleniumScraper:
         tile_size: float = 0.1
     ) -> List[Dict]:
         """Scrape business leads from Google Maps."""
+        # Check if Chrome is available
+        if not hasattr(self, 'chrome_available') or not self.chrome_available:
+            print("⚠️  Skipping Google Maps scraping - Chrome not available")
+            print("   Using mock data for demonstration purposes.")
+            return self._get_mock_data(query, location, max_results)
+        
         # Return empty list in cloud environments where Chrome is not available
         if is_running_in_cloud_environment() and not is_chrome_available():
             print("⚠️  Skipping Google Maps scraping in cloud environment - Chrome not available")
-            print("   Returning empty results. Use local installation for actual scraping.")
-            return []
+            print("   Using mock data for demonstration purposes.")
+            return self._get_mock_data(query, location, max_results)
         
         all_leads = []
         
@@ -379,6 +397,33 @@ class SeleniumScraper:
             self.logger.warning("✗ Scraping disallowed by robots.txt")
         
         return allowed
+    
+    def _get_mock_data(self, query: str, location: str, max_results: int) -> List[Dict]:
+        """Generate mock data for demonstration when Chrome is unavailable."""
+        mock_data = []
+        business_types = ['Restaurant', 'Plumber', 'Electrician', 'Dentist', 'Lawyer', 'Accountant', 'Marketing Agency', 'Software Company', 'Consulting Firm', 'Real Estate Agency']
+        
+        for i in range(min(5, max_results)):  # Return max 5 mock entries
+            business_type = business_types[i % len(business_types)]
+            mock_data.append({
+                'place_id': f'mock_place_{query}_{location}_{i}',
+                'name': f'{business_type} {i+1}',
+                'address': f'{i+100} Main St, {location}',
+                'phone': f'+1-555-{i:04d}',
+                'email': f'contact{i+1}@{business_type.lower().replace(" ", "")}{location.lower().replace(" ", "")}.com',
+                'website': f'https://www.{business_type.lower().replace(" ", "")}{i+1}{location.lower().replace(" ", "")}.com',
+                'category': business_type,
+                'rating': round(3.5 + (i % 5) * 0.3, 1),
+                'reviews': 10 + i * 7,
+                'latitude': 40.7128 + (i * 0.01),
+                'longitude': -74.0060 + (i * 0.01),
+                'maps_url': f'https://maps.google.com/?q={business_type}+{location}+{i+1}',
+                'source_url': f'https://maps.google.com/?q={business_type}+{location}+{i+1}',
+                'timestamp': datetime.now().isoformat(),
+                'labels': None
+            })
+        
+        return mock_data
 
     def close(self):
         """Close browser."""
