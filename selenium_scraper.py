@@ -136,6 +136,9 @@ class SeleniumScraper:
                 print("   For local use: Install Chrome browser and run locally.")
                 print("   For cloud deployment: Consider using alternative data sources.\n")
             raise
+        except SystemExit:
+            # Handle system exit exceptions
+            pass
     
     def _setup_driver(self):
         """Set up Chrome WebDriver with appropriate options."""
@@ -243,6 +246,17 @@ class SeleniumScraper:
             
             self.logger.info("✓ Chrome WebDriver initialized successfully")
             
+        except WebDriverException as e:
+            if "unexpectedly exited. Status code was: 127" in str(e):
+                self.logger.error("ChromeDriver failed to start - missing system libraries in deployment environment")
+                print("\n🚨 ChromeDriver Error: Missing system libraries")
+                print("   This commonly occurs in deployment environments like Streamlit Cloud")
+                print("   where essential Linux libraries for Chrome are not available.")
+                print("   \n💡 SOLUTIONS:")
+                print("   - For local use: Install Chrome browser and required system libraries")
+                print("   - For cloud deployment: Use alternative scraping methods or self-hosted solutions")
+                print("   - Contact your hosting provider for Chrome-compatible environment\n")
+            raise
         except Exception as e:
             self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
             raise
