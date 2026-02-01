@@ -163,14 +163,12 @@ class SeleniumScraper:
             options.add_argument(f'--user-data-dir={user_data_dir}')
             options.add_argument(f'--profile-directory={self.profile}')
         
-        # Essential options for Linux/Docker environments
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_argument('--disable-dev-shm-usage')
+        # Essential options for Linux/Docker environments - these are critical
         options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--disable-extensions')
         options.add_argument('--disable-plugins-discovery')
-        options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_argument('--disable-background-timer-throttling')
         options.add_argument('--disable-backgrounding-occluded-windows')
         options.add_argument('--disable-renderer-backgrounding')
@@ -179,8 +177,24 @@ class SeleniumScraper:
         options.add_argument('--disable-background-networking')
         options.add_argument('--disable-default-apps')
         options.add_argument('--disable-features=VizDisplayCompositor')
+        options.add_argument('--disable-setuid-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-accelerated-2d-canvas')
+        options.add_argument('--no-first-run')
+        options.add_argument('--no-zygote')
+        options.add_argument('--disable-features=VizDisplayCompositor')
+        options.add_argument('--disable-logging')
+        options.add_argument('--disable-permissions-api')
+        options.add_argument('--disable-web-security')
+        options.add_argument('--allow-running-insecure-content')
+        options.add_argument('--disable-site-isolation-trials')
         
-        # Options for headless operation
+        # Anti-detection options
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('--disable-features=UserAgentClientHint')
+        options.add_argument('--disable-features=Translate')
+        
+        # Headless operation
         options.add_argument('--headless=new')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--lang=en-US')
@@ -194,14 +208,13 @@ class SeleniumScraper:
             "profile.managed_default_content_settings.images": 2
         })
         
-        # Additional stealth options
-        options.add_argument('--disable-features=UserAgentClientHint')
-        options.add_argument('--disable-features=Translate')
-        
         try:
             # Use ChromeDriverManager to get the correct ChromeDriver
             chrome_driver_path = ChromeDriverManager().install()
             service = Service(chrome_driver_path)
+            
+            # Set proper log path to avoid permission issues
+            service.log_path = os.devnull  # Suppress logs to avoid permission issues
             
             self.driver = webdriver.Chrome(service=service, options=options)
             
