@@ -10,7 +10,6 @@ from datetime import datetime
 from pathlib import Path
 import sqlite3
 import hashlib
-import random
 
 # Database Path
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.db')
@@ -19,14 +18,13 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.db')
 from config import Config
 from utils import setup_logging
 from selenium_scraper import SeleniumScraper
-from exporter import DataExporter
-from dedupe import Deduplicator
+from deduplicator import Deduplicator
+from data_exporter import DataExporter
 from robots_checker import RobotsChecker
 from ai_manager import global_settings_page
 import extra_streamlit_components as stx
 from datetime import timedelta
 import sys
-from pathlib import Path
 
 # Add the Email Sending Stremlit directory and its components to Python path
 # Using dynamic search to handle potential folder name variations (like spaces)
@@ -1484,7 +1482,8 @@ def google_maps_scraping():
                            "This is common in cloud deployments. The app will now demonstrate functionality with sample data.\n\n"
                            "**For full functionality:**\n"
                            "- Run locally with Chrome installed\n"
-                           "- Or deploy to a Chrome-compatible environment")
+                           "- Or deploy to a Chrome-compatible environment\n"
+                           "- Or use a cloud service that supports Chrome")
             except Exception as e:
                 status_text.markdown("### ⚠️ Scraper Initialization Failed")
                 st.error(f"Failed to initialize scraper: {str(e)}")
