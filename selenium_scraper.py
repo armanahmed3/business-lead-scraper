@@ -8,6 +8,11 @@ import time
 import random
 import logging
 import sys
+import platform
+try:
+    import winreg
+except ImportError:
+    winreg = None
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from urllib.parse import quote_plus
@@ -35,23 +40,22 @@ from utils import sleep_random
 
 def is_chrome_available():
     """Check if Chrome/Chromium is available on the system."""
-    import platform
     
     try:
         system = platform.system()
         
         if system == "Windows":
             # Check Windows registry or common installation paths
-            import winreg
-            try:
-                # Try to find Chrome in registry
-                reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
-                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
-                    install_path = winreg.QueryValue(key, "")
-                    if install_path and os.path.exists(install_path):
-                        return True
-            except:
-                pass
+            if winreg is not None:
+                try:
+                    # Try to find Chrome in registry
+                    reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+                        install_path = winreg.QueryValue(key, "")
+                        if install_path and os.path.exists(install_path):
+                            return True
+                except:
+                    pass
                 
             # Check common installation paths
             common_paths = [
@@ -144,8 +148,6 @@ class SeleniumScraper:
             options.add_argument('--guest')
         elif self.profile:
             self.logger.info(f"Launching Chrome with profile: {self.profile}")
-            import platform
-            import os
             
             system = platform.system()
             if system == 'Windows':
@@ -213,8 +215,8 @@ class SeleniumScraper:
             chrome_driver_path = ChromeDriverManager().install()
             service = Service(chrome_driver_path)
             
-            # Set proper log path to avoid permission issues
-            service.log_path = os.devnull  # Suppress logs to avoid permission issues
+            # Suppress ChromeDriver logs by redirecting to devnull
+            service.log_path = "NUL" if os.name == "nt" else "/dev/null"
             
             self.driver = webdriver.Chrome(service=service, options=options)
             
