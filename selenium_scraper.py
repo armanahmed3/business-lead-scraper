@@ -170,27 +170,26 @@ class SeleniumScraper:
             self.chrome_available = False
             self.driver = None
             self.wait = None
-            return
-        
-        self.chrome_available = True
-        try:
-            self._setup_driver()
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
-            self.chrome_available = False
-            self.driver = None
-            self.wait = None
-            if "Streamlit" in str(type(sys.modules.get('streamlit', ''))):
-                # We're in Streamlit environment
-                print("\n🚨 Google Maps scraping requires Chrome browser and may not work in cloud deployment environments.")
-                print("   For local use: Install Chrome browser and run locally.")
-                print("   For cloud deployment: Consider using alternative data sources.\n")
-            # Don't raise exception - allow app to continue with mock data
-        except SystemExit:
-            # Handle system exit exceptions
-            self.chrome_available = False
-            self.driver = None
-            self.wait = None
+        else:
+            self.chrome_available = True
+            try:
+                self._setup_driver()
+            except Exception as e:
+                self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
+                self.chrome_available = False
+                self.driver = None
+                self.wait = None
+                if "Streamlit" in str(type(sys.modules.get('streamlit', ''))):
+                    # We're in Streamlit environment
+                    print("\n🚨 Google Maps scraping requires Chrome browser and may not work in cloud deployment environments.")
+                    print("   For local use: Install Chrome browser and run locally.")
+                    print("   For cloud deployment: Consider using alternative data sources.\n")
+                # Don't raise exception - allow app to continue with mock data
+            except SystemExit:
+                # Handle system exit exceptions
+                self.chrome_available = False
+                self.driver = None
+                self.wait = None
     
     def _setup_driver(self):
         """Set up Chrome WebDriver with appropriate options."""

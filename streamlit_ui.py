@@ -1494,26 +1494,26 @@ def google_maps_scraping():
                 demo_scraper = SeleniumScraper.__new__(SeleniumScraper)
                 demo_scraper.chrome_available = False
                 demo_scraper.config = config
-                demo_scraper._get_mock_data = lambda q, l, max_results: [
+                demo_scraper._get_mock_data = lambda query, location, max_results: [
                     {
-                        'place_id': f'demo_place_{q}_{l}_{i}',
+                        'place_id': f'demo_place_{query}_{location}_{i}',
                         'name': f'Demo Business {i+1}',
-                        'address': f'{i+100} Demo St, {l}',
+                        'address': f'{i+100} Demo St, {location}',
                         'phone': f'+1-555-{i:04d}',
-                        'email': f'contact{i+1}@demo{q.lower().replace(" ", "")}.com',
-                        'website': f'https://demo{i+1}{q.lower().replace(" ", "")}.com',
+                        'email': f'contact{i+1}@demo{query.lower().replace(" ", "")}.com',
+                        'website': f'https://demo{i+1}{query.lower().replace(" ", "")}.com',
                         'category': 'Demo Business',
                         'rating': round(3.5 + (i % 5) * 0.3, 1),
                         'reviews': 10 + i * 7,
                         'latitude': 40.7128 + (i * 0.01),
                         'longitude': -74.0060 + (i * 0.01),
-                        'maps_url': f'https://maps.google.com/?q=demo+{q}+{l}+{i+1}',
-                        'source_url': f'https://maps.google.com/?q=demo+{q}+{l}+{i+1}',
+                        'maps_url': f'https://maps.google.com/?q=demo+{query}+{location}+{i+1}',
+                        'source_url': f'https://maps.google.com/?q=demo+{query}+{location}+{i+1}',
                         'timestamp': datetime.now().isoformat(),
                         'labels': None
                     } for i in range(min(5, max_results))
                 ]
-                demo_scraper.scrape_google_maps = lambda q, l, max_results: demo_scraper._get_mock_data(q, l, max_results)
+                demo_scraper.scrape_google_maps = lambda **kwargs: demo_scraper._get_mock_data(kwargs.get('query'), kwargs.get('location'), kwargs.get('max_results', 50))
                 demo_scraper.close = lambda: None
                 scraper = demo_scraper
             
