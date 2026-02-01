@@ -23,6 +23,8 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
     WebDriverException
 )
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 
 from robots_checker import RobotsChecker
 from utils import sleep_random
@@ -99,8 +101,11 @@ class SeleniumScraper:
         options.add_argument('--disable-features=Translate')
         
         try:
-            # use selenium's internal manager
-            self.driver = webdriver.Chrome(options=options)
+            # Use ChromeDriverManager to get the correct ChromeDriver
+            chrome_driver_path = ChromeDriverManager().install()
+            service = Service(chrome_driver_path)
+            
+            self.driver = webdriver.Chrome(service=service, options=options)
             
             self.driver.set_page_load_timeout(
                 self.config.selenium['page_load_timeout']
