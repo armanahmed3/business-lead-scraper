@@ -7,6 +7,7 @@ UPDATED NOVEMBER 2025 - Working selectors for current Google Maps.
 import time
 import random
 import logging
+import sys
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from urllib.parse import quote_plus
@@ -25,9 +26,76 @@ from selenium.common.exceptions import (
 )
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
+import subprocess
+import os
 
 from robots_checker import RobotsChecker
 from utils import sleep_random
+
+
+def is_chrome_available():
+    """Check if Chrome/Chromium is available on the system."""
+    import platform
+    
+    try:
+        system = platform.system()
+        
+        if system == "Windows":
+            # Check Windows registry or common installation paths
+            import winreg
+            try:
+                # Try to find Chrome in registry
+                reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+                    install_path = winreg.QueryValue(key, "")
+                    if install_path and os.path.exists(install_path):
+                        return True
+            except:
+                pass
+                
+            # Check common installation paths
+            common_paths = [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe")
+            ]
+            
+            for path in common_paths:
+                if os.path.exists(path):
+                    return True
+                    
+        elif system == "Darwin":  # macOS
+            # Check if Chrome is installed
+            result = subprocess.run(['which', 'google-chrome'], 
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                    timeout=5)
+            if result.returncode == 0:
+                return True
+                                    
+        else:  # Linux and other Unix-like systems
+            # Check if chrome/chromium is available
+            result = subprocess.run(['which', 'google-chrome'], 
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                    timeout=5)
+            if result.returncode == 0:
+                return True
+                
+            result = subprocess.run(['which', 'chromium-browser'], 
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                    timeout=5)
+            if result.returncode == 0:
+                return True
+                
+            result = subprocess.run(['which', 'chrome'], 
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                    timeout=5)
+            if result.returncode == 0:
+                return True
+                
+        return False
+    except:
+        # If we can't check, assume it's not available rather than crash
+        return False
 
 
 class SeleniumScraper:
@@ -45,7 +113,25 @@ class SeleniumScraper:
         self.driver = None
         self.wait = None
         
-        self._setup_driver()
+        # Check if Chrome is available before initializing
+        chrome_available = is_chrome_available()
+        if not chrome_available:
+            self.logger.warning("Chrome/Chromium not found on system. Selenium scraper may not work in this environment.")
+            # Still try to initialize, but user should be aware of potential issues
+            print("⚠️  Warning: Chrome/Chromium not found on system.")
+            print("   This may cause issues in deployment environments like Streamlit Cloud.")
+            print("   Consider using alternative scraping methods for deployment.")
+        
+        try:
+            self._setup_driver()
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
+            if "Streamlit" in str(type(sys.modules.get('streamlit', ''))):
+                # We're in Streamlit environment
+                print("\n🚨 Google Maps scraping requires Chrome browser and may not work in cloud deployment environments.")
+                print("   For local use: Install Chrome browser and run locally.")
+                print("   For cloud deployment: Consider using alternative data sources.\n")
+            raise
     
     def _setup_driver(self):
         """Set up Chrome WebDriver with appropriate options."""
@@ -77,27 +163,39 @@ class SeleniumScraper:
             options.add_argument(f'--user-data-dir={user_data_dir}')
             options.add_argument(f'--profile-directory={self.profile}')
         
+        # Essential options for Linux/Docker environments
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-gpu')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--lang=en-US')
         options.add_argument('--disable-extensions')
         options.add_argument('--disable-plugins-discovery')
         options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('--disable-background-timer-throttling')
+        options.add_argument('--disable-backgrounding-occluded-windows')
+        options.add_argument('--disable-renderer-backgrounding')
+        options.add_argument('--disable-features=TranslateUI')
+        options.add_argument('--disable-ipc-flooding-protection')
+        options.add_argument('--disable-background-networking')
+        options.add_argument('--disable-default-apps')
+        options.add_argument('--disable-features=VizDisplayCompositor')
+        
+        # Options for headless operation
+        options.add_argument('--headless=new')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--lang=en-US')
+        
+        # Experimental options for better compatibility
         options.add_experimental_option('excludeSwitches', ['enable-automation'])
         options.add_experimental_option('useAutomationExtension', False)
         options.add_experimental_option("prefs", {
-            "profile.default_content_setting_values.notifications": 2
+            "profile.default_content_setting_values.notifications": 2,
+            "profile.default_content_settings.popups": 0,
+            "profile.managed_default_content_settings.images": 2
         })
-        
-        if self.headless:
-            options.add_argument('--headless=new')
         
         # Additional stealth options
         options.add_argument('--disable-features=UserAgentClientHint')
-        options.add_argument('--disable-features=VizDisplayCompositor')
         options.add_argument('--disable-features=Translate')
         
         try:
