@@ -18,8 +18,8 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.db')
 from config import Config
 from utils import setup_logging
 from selenium_scraper import SeleniumScraper
-from deduplicator import Deduplicator
-from data_exporter import DataExporter
+from dedupe import Deduplicator
+from exporter import DataExporter
 from robots_checker import RobotsChecker
 from ai_manager import global_settings_page
 import extra_streamlit_components as stx
