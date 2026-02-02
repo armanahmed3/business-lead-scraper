@@ -1458,64 +1458,19 @@ def google_maps_scraping():
             config._config['robots']['enabled'] = False
             config._config['scraping']['default_delay'] = delay
             config._config['scraping']['max_leads_per_session'] = max_leads
-            
-            # Add Google Sheets credentials if available
-            if 'google_sheets_creds' in st.session_state:
-                config._config['google_sheets_creds'] = st.session_state.google_sheets_creds
+        
             
             logger = setup_logging(config)
             
             status_text.markdown("### 🔄 Initializing Advanced Scraper...")
             
             # Initialize scraper with error handling
-            try:
-                scraper = SeleniumScraper(
-                    config=config,
-                    headless=not st.checkbox("Debug Mode (Show Browser)", value=False),
-                    guest_mode=True,
-                    delay=delay
-                )
-                
-                # Check if scraper is properly initialized
-                if not hasattr(scraper, 'chrome_available') or not scraper.chrome_available:
-                    status_text.markdown("### ⚠️ Chrome Not Available - Using Demo Mode")
-                    st.info("🌐 **Chrome browser not available in this environment**\n\n"
-                           "This is common in cloud deployments. The app will now demonstrate functionality with sample data.\n\n"
-                           "**For full functionality:**\n"
-                           "- Run locally with Chrome installed\n"
-                           "- Or deploy to a Chrome-compatible environment\n"
-                           "- Or use a cloud service that supports Chrome")
-            except Exception as e:
-                status_text.markdown("### ⚠️ Scraper Initialization Failed")
-                st.error(f"Failed to initialize scraper: {str(e)}")
-                st.info("🌐 **Using demo mode with sample data**")
-                # Create a minimal scraper object for demo purposes
-                from selenium_scraper import SeleniumScraper
-                demo_scraper = SeleniumScraper.__new__(SeleniumScraper)
-                demo_scraper.chrome_available = False
-                demo_scraper.config = config
-                demo_scraper._get_mock_data = lambda query, location, max_results: [
-                    {
-                        'place_id': f'demo_place_{query}_{location}_{i}',
-                        'name': f'Demo Business {i+1}',
-                        'address': f'{i+100} Demo St, {location}',
-                        'phone': f'+1-555-{i:04d}',
-                        'email': f'contact{i+1}@demo{query.lower().replace(" ", "")}.com',
-                        'website': f'https://demo{i+1}{query.lower().replace(" ", "")}.com',
-                        'category': 'Demo Business',
-                        'rating': round(3.5 + (i % 5) * 0.3, 1),
-                        'reviews': 10 + i * 7,
-                        'latitude': 40.7128 + (i * 0.01),
-                        'longitude': -74.0060 + (i * 0.01),
-                        'maps_url': f'https://maps.google.com/?q=demo+{query}+{location}+{i+1}',
-                        'source_url': f'https://maps.google.com/?q=demo+{query}+{location}+{i+1}',
-                        'timestamp': datetime.now().isoformat(),
-                        'labels': None
-                    } for i in range(min(5, max_results))
-                ]
-                demo_scraper.scrape_google_maps = lambda **kwargs: demo_scraper._get_mock_data(kwargs.get('query'), kwargs.get('location'), kwargs.get('max_results', 50))
-                demo_scraper.close = lambda: None
-                scraper = demo_scraper
+            scraper = SeleniumScraper(
+                config=config,
+                headless=not st.checkbox("Debug Mode (Show Browser)", value=False),
+                guest_mode=True,
+                delay=delay
+            )
             
             status_text.markdown(f"### 🔍 Searching for **{query}** in **{location}**...")
             progress_bar.progress(10)
@@ -1536,6 +1491,63 @@ def google_maps_scraping():
             deduplicator = Deduplicator(config)
             unique_leads = deduplicator.deduplicate(leads)
             
+            # Verify count - if we have duplicates, we might have fewer than requested
+            # In a real "exact count" scenario, we'd loop. 
+            # For now, we report what we have.
+            
+            status_text.markdown("### 💾 Preparing Download...")
+            progress_bar.progress(90)
+            
+            # Use temporary directory for export to avoid disk usage issues on Cloud
+            with tempfile.TemporaryDirectory() as temp_dir:
+                exporter = DataExporter(config, output_dir=temp_dir)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                
+                clean_query = "".join(x for x in query if x.isalnum() or x in " -_").strip().replace(" ", "_")
+                clean_loc = "".join(x for x in location if x.isalnum() or x in " -_").strip().replace(" ", "_")
+                base_filename = f"Leads_{clean_query}_{clean_loc}_{timestamp}"
+                
+                exported_files = exporter.export(
+                    data=unique_leads,
+                    formats=formats,
+                    filename=base_filename
+                )
+                
+                progress_bar.progress(100)
+                status_text.markdown("### ✅ Generation Complete!")
+                
+                st.success(f"Successfully generated {len(unique_leads)} unique leads (Raw: {len(leads)})")
+                
+                if unique_leads:
+                    df = pd.DataFrame(unique_leads)
+                    # Show preview (limit columns for UI)
+                    preview_cols = ['name', 'phone', 'email', 'website', 'address']
+                    st.dataframe(df[ [c for c in preview_cols if c in df.columns] ])
+                    
+                    # Download buttons - Read into memory immediately
+                    st.markdown("### 📥 Download Results" )
+                    cols = st.columns(len(exported_files))
+                    for idx, file_path in enumerate(exported_files):
+                        with cols[idx]:
+                            path_obj = Path(file_path)
+                            with open(file_path, 'rb') as f:
+                                file_data = f.read()
+                                
+                            st.download_button(
+                                label=f"Download {path_obj.suffix[1:].upper()}",
+                                data=file_data,
+                                file_name=path_obj.name,
+                                mime="application/octet-stream" if path_obj.suffix != '.xlsx' else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dl_{idx}"
+                            )
+                
+            # Temp dir is automatically cleaned up here
+        
+        except Exception as e:
+            st.error(f"System Error: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+
             # SaaS Usage Tracking
             found_count = len(unique_leads)
             new_total = st.session_state.usage_count + found_count
