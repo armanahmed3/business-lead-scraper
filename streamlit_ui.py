@@ -1449,25 +1449,24 @@ def google_maps_scraping():
             st.markdown('<a href="https://wa.me/923213809420" target="_blank"><button style="padding:10px; background:#25D366; color:white; border:none; border-radius:5px;">Upgrade via WhatsApp 📱</button></a>', unsafe_allow_html=True)
             return
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        leads = []
+        unique_leads = []
         
         try:
             config = Config()
-            # Temporarily disable robots.txt for testing to ensure results
             config._config['robots']['enabled'] = False
             config._config['scraping']['default_delay'] = delay
             config._config['scraping']['max_leads_per_session'] = max_leads
-        
             
             logger = setup_logging(config)
+            status_text = st.empty()
+            progress_bar = st.progress(0)
             
             status_text.markdown("### 🔄 Initializing Advanced Scraper...")
             
-            # Initialize scraper with error handling
             scraper = SeleniumScraper(
                 config=config,
-                headless=not st.checkbox("Debug Mode (Show Browser)", value=False),
+                headless=not st.checkbox("Debug Mode (Show Browser)", value=False, key="scraping_headless_cb"),
                 guest_mode=True,
                 delay=delay
             )
@@ -1475,8 +1474,6 @@ def google_maps_scraping():
             status_text.markdown(f"### 🔍 Searching for **{query}** in **{location}**...")
             progress_bar.progress(10)
             
-            # Perform scraping
-            # Note: The scraper collects leads. Deduplication ensures uniqueness.
             leads = scraper.scrape_google_maps(
                 query=query,
                 location=location,
@@ -1485,20 +1482,14 @@ def google_maps_scraping():
             
             scraper.close()
             status_text.markdown("### ⚙️ Processing and Deduplicating Data...")
-            progress_bar.progress(75)
+            progress_bar.progress(70)
             
-            # Deduplicate
             deduplicator = Deduplicator(config)
             unique_leads = deduplicator.deduplicate(leads)
             
-            # Verify count - if we have duplicates, we might have fewer than requested
-            # In a real "exact count" scenario, we'd loop. 
-            # For now, we report what we have.
-            
             status_text.markdown("### 💾 Preparing Download...")
             progress_bar.progress(90)
             
-            # Use temporary directory for export to avoid disk usage issues on Cloud
             with tempfile.TemporaryDirectory() as temp_dir:
                 exporter = DataExporter(config, output_dir=temp_dir)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1513,66 +1504,7 @@ def google_maps_scraping():
                     filename=base_filename
                 )
                 
-                progress_bar.progress(100)
-                status_text.markdown("### ✅ Generation Complete!")
-                
-                st.success(f"Successfully generated {len(unique_leads)} unique leads (Raw: {len(leads)})")
-                
-                if unique_leads:
-                    df = pd.DataFrame(unique_leads)
-                    # Show preview (limit columns for UI)
-                    preview_cols = ['name', 'phone', 'email', 'website', 'address']
-                    st.dataframe(df[ [c for c in preview_cols if c in df.columns] ])
-                    
-                    # Download buttons - Read into memory immediately
-                    st.markdown("### 📥 Download Results" )
-                    cols = st.columns(len(exported_files))
-                    for idx, file_path in enumerate(exported_files):
-                        with cols[idx]:
-                            path_obj = Path(file_path)
-                            with open(file_path, 'rb') as f:
-                                file_data = f.read()
-                                
-                            st.download_button(
-                                label=f"Download {path_obj.suffix[1:].upper()}",
-                                data=file_data,
-                                file_name=path_obj.name,
-                                mime="application/octet-stream" if path_obj.suffix != '.xlsx' else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key=f"dl_{idx}"
-                            )
-                
-            # Temp dir is automatically cleaned up here
-        
-        except Exception as e:
-            st.error(f"System Error: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
-
-            # SaaS Usage Tracking
-            found_count = len(unique_leads)
-            new_total = st.session_state.usage_count + found_count
-            db.update_settings(st.session_state.username, {'usage_count': new_total})
-            st.session_state.usage_count = new_total
-            
-            status_text.markdown("### 💾 Preparing Download...")
-            progress_bar.progress(90)
-            
-            # Use temporary directory for export to avoid disk usage issues on Cloud
-            with tempfile.TemporaryDirectory() as temp_dir:
-                exporter = DataExporter(config, output_dir=temp_dir)
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                
-                clean_query = "".join(x for x in query if x.isalnum() or x in " -_").strip().replace(" ", "_")
-                clean_loc = "".join(x for x in location if x.isalnum() or x in " -_").strip().replace(" ", "_")
-                base_filename = f"Leads_{clean_query}_{clean_loc}_{timestamp}"
-                
-                exported_files = exporter.export(
-                    data=unique_leads,
-                    formats=formats,
-                    filename=base_filename
-                )
-                
-                # Store results in session state for persistence across reruns
+                # Store results in session state for persistence
                 st.session_state.scrape_results = unique_leads
                 results_list = []
                 for file_path in exported_files:
@@ -1584,9 +1516,15 @@ def google_maps_scraping():
                             results_list.append(('Download', f.read(), path_obj.suffix.upper(), path_obj.name))
                 st.session_state.exported_files_data = results_list
 
+                # SaaS Usage Tracking
+                found_count = len(unique_leads)
+                new_total = st.session_state.usage_count + found_count
+                db.update_settings(st.session_state.username, {'usage_count': new_total})
+                st.session_state.usage_count = new_total
+
                 progress_bar.progress(100)
                 status_text.markdown("### ✅ Generation Complete!")
-                st.rerun() # Force UI refresh to show persistent buttons
+                st.rerun()
         
         except Exception as e:
             st.error(f"System Error: {str(e)}")

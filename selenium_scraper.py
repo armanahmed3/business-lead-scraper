@@ -116,31 +116,48 @@ class SeleniumScraper:
                     self.logger.info(f"Fixed binary location to: {path}")
                     break
         
+        # Initialization logic
         try:
-            # TRY 1: Native Selenium 4.x Manager (Safest for Cloud)
-            # This will use system chromium-driver if available or download the correct one
-            self.logger.info("Attempting native driver initialization...")
-            self.driver = webdriver.Chrome(options=options)
+            if is_streamlit_cloud:
+                # On Streamlit Cloud, always try system chromedriver first
+                try:
+                    self.logger.info("Streamlit Cloud: Attempting system chromedriver...")
+                    service = Service('/usr/bin/chromedriver')
+                    self.driver = webdriver.Chrome(service=service, options=options)
+                    self.logger.info("✓ System chromedriver initialized successfully")
+                except Exception as e:
+                    self.logger.warning(f"System chromedriver failed: {e}. Trying fallbacks...")
+            
+            if not self.driver:
+                # TRY 1: Native Selenium 4.x Manager (Safest for local/modern environments)
+                self.logger.info("Attempting native driver initialization...")
+                self.driver = webdriver.Chrome(options=options)
             
         except Exception as e1:
-            self.logger.warning(f"Native initialization failed: {e1}. Falling back to webdriver-manager...")
+            self.logger.warning(f"Primary initialization failed: {e1}. Falling back to webdriver-manager...")
             try:
                 # TRY 2: webdriver-manager as fallback
                 from webdriver_manager.chrome import ChromeDriverManager
                 from selenium.webdriver.chrome.service import Service
                 
-                service = Service(ChromeDriverManager().install())
+                # Check for Chrome vs Chromium with webdriver-manager
+                if is_streamlit_cloud:
+                    from webdriver_manager.core.os_manager import ChromeType
+                    driver_path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
+                else:
+                    driver_path = ChromeDriverManager().install()
+                    
+                service = Service(driver_path)
                 self.driver = webdriver.Chrome(service=service, options=options)
             except Exception as e2:
                 self.logger.error(f"Failed to initialize Chrome WebDriver with fallback: {e2}")
-                # Try one last deep fallback for Linux system path
+                # Try one last deep fallback for Linux system path if not already tried
                 if not is_streamlit_cloud:
                     raise
                 
                 try:
                     self.logger.info("Final attempt: forcing system driver path...")
                     from selenium.webdriver.chrome.service import Service
-                    # Common paths for chromium-driver in debian/ubuntu
                     driver_service = Service('/usr/bin/chromedriver')
                     self.driver = webdriver.Chrome(service=driver_service, options=options)
                 except Exception as e3:
