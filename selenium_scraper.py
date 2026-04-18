@@ -119,14 +119,17 @@ class SeleniumScraper:
         # Initialization logic
         try:
             if is_streamlit_cloud:
-                # On Streamlit Cloud, always try system chromedriver first
+                # On Streamlit Cloud with packages.txt containing only 'chromium'
+                # Path /usr/bin/chromedriver might not exist, so we let fallback handle it
+                # but we'll try it just in case it was bundled
                 try:
-                    self.logger.info("Streamlit Cloud: Attempting system chromedriver...")
-                    service = Service('/usr/bin/chromedriver')
-                    self.driver = webdriver.Chrome(service=service, options=options)
-                    self.logger.info("✓ System chromedriver initialized successfully")
+                    if os.path.exists('/usr/bin/chromedriver'):
+                        self.logger.info("Streamlit Cloud: Found system chromedriver at /usr/bin/chromedriver")
+                        service = Service('/usr/bin/chromedriver')
+                        self.driver = webdriver.Chrome(service=service, options=options)
+                        self.logger.info("✓ System chromedriver initialized successfully")
                 except Exception as e:
-                    self.logger.warning(f"System chromedriver failed: {e}. Trying fallbacks...")
+                    self.logger.warning(f"System chromedriver at /usr/bin/chromedriver failed: {e}")
             
             if not self.driver:
                 # TRY 1: Native Selenium 4.x Manager (Safest for local/modern environments)
@@ -140,29 +143,31 @@ class SeleniumScraper:
                 from webdriver_manager.chrome import ChromeDriverManager
                 from selenium.webdriver.chrome.service import Service
                 
-                # Check for Chrome vs Chromium with webdriver-manager
+                # IMPORTANT: Use ChromeType.CHROMIUM for Streamlit Cloud
                 if is_streamlit_cloud:
                     from webdriver_manager.core.os_manager import ChromeType
+                    self.logger.info("Installing Chromium-specific driver via webdriver-manager...")
                     driver_path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
                 else:
                     driver_path = ChromeDriverManager().install()
                     
                 service = Service(driver_path)
                 self.driver = webdriver.Chrome(service=service, options=options)
+                self.logger.info("✓ Webdriver-manager initialization successful")
             except Exception as e2:
                 self.logger.error(f"Failed to initialize Chrome WebDriver with fallback: {e2}")
-                # Try one last deep fallback for Linux system path if not already tried
-                if not is_streamlit_cloud:
-                    raise
-                
-                try:
-                    self.logger.info("Final attempt: forcing system driver path...")
-                    from selenium.webdriver.chrome.service import Service
-                    driver_service = Service('/usr/bin/chromedriver')
-                    self.driver = webdriver.Chrome(service=driver_service, options=options)
-                except Exception as e3:
-                    self.logger.error(f"Critical failure: All driver initialization methods failed. {e3}")
-                    raise
+                # Try final deep fallbacks
+                fallback_paths = ['/usr/bin/chromedriver', '/usr/lib/chromium-browser/chromedriver']
+                for fpath in fallback_paths:
+                    if os.path.exists(fpath):
+                        try:
+                            self.logger.info(f"Final attempt: forcing driver path {fpath}...")
+                            service = Service(fpath)
+                            self.driver = webdriver.Chrome(service=service, options=options)
+                            if self.driver: return
+                        except:
+                            continue
+                raise
         
         try:
             self.driver.set_page_load_timeout(
