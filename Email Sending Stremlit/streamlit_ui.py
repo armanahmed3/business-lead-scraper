@@ -6,11 +6,11 @@ import os
 import shutil
 import tempfile
 import time
+import random
 from datetime import datetime
 from pathlib import Path
 import sqlite3
 import hashlib
-import random
 
 # Database Path
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.db')
@@ -19,14 +19,13 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.db')
 from config import Config
 from utils import setup_logging
 from selenium_scraper import SeleniumScraper
-from exporter import DataExporter
 from dedupe import Deduplicator
+from exporter import DataExporter
 from robots_checker import RobotsChecker
 from ai_manager import global_settings_page
 import extra_streamlit_components as stx
 from datetime import timedelta
 import sys
-from pathlib import Path
 
 # Add the Email Sending Stremlit directory and its components to Python path
 # Using dynamic search to handle potential folder name variations (like spaces)
@@ -1084,20 +1083,27 @@ def email_sender():
     import sys
     import os
 
-    def load_module_from_file(module_name, file_path):
+    def load_module_from_file(module_name, file_path, quiet=False):
         """Helper to load a module directly from a file path"""
         try:
-            if module_name in sys.modules:
-                return sys.modules[module_name]
+            if not os.path.exists(file_path):
+                if not quiet:
+                    st.error(f"Missing File: {file_path}")
+                return None
                 
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
+            unique_name = f"email_sys_{module_name}"
+            if unique_name in sys.modules:
+                return sys.modules[unique_name]
+                
+            spec = importlib.util.spec_from_file_location(unique_name, file_path)
             if spec and spec.loader:
                 module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
+                sys.modules[unique_name] = module
                 spec.loader.exec_module(module)
                 return module
         except Exception as e:
-            st.error(f"Failed to load {module_name} from {file_path}: {e}")
+            if not quiet:
+                st.error(f"Failed to load {module_name}: {e}")
             return None
         return None
 
@@ -1112,34 +1118,34 @@ def email_sender():
     
     if not email_dir or not os.path.exists(email_dir):
         # Fallback for cloud structure variations
-        if os.path.exists(os.path.join(current_dir, "Email Sending  Stremlit")):
-             email_dir = os.path.join(current_dir, "Email Sending  Stremlit")
+        fallback_path = os.path.join(current_dir, "Email Sending  Stremlit")
+        if os.path.exists(fallback_path):
+             email_dir = fallback_path
 
     if email_dir:
-        # Pre-load core dependencies manually to ensure they exist in sys.modules
-        lead_db_path = os.path.join(email_dir, "lead_database.py")
-        ai_gen_path = os.path.join(email_dir, "ai_email_generator.py")
-        email_sender_path = os.path.join(email_dir, "email_sender.py")
-        email_scheduler_path = os.path.join(email_dir, "email_scheduler.py")
-        
-        load_module_from_file("lead_database", lead_db_path)
-        load_module_from_file("ai_email_generator", ai_gen_path)
-        load_module_from_file("email_sender", email_sender_path)
-        load_module_from_file("email_scheduler", email_scheduler_path)
-        
-        # Add pages to sys.path if not present
+        # Add all relevant directories to sys.path to resolve child imports
         pages_dir = os.path.join(email_dir, "pages")
-        if pages_dir not in sys.path:
-            sys.path.append(pages_dir)
-            
-        # Add main email dir to sys.path too
-        if email_dir not in sys.path:
-            sys.path.append(email_dir)
+        backend_dir = os.path.join(email_dir, "backend")
+        services_dir = os.path.join(backend_dir, "services")
+        
+        for d in [email_dir, pages_dir, backend_dir, services_dir]:
+            if os.path.exists(d) and d not in sys.path:
+                sys.path.append(d)
+
+        # Pre-load core dependencies manually if they exist
+        # We load these 'quietly' because they might be missing or replaced by the backend structure
+        load_module_from_file("lead_database", os.path.join(email_dir, "lead_database.py"), quiet=True)
+        load_module_from_file("ai_email_generator", os.path.join(email_dir, "ai_email_generator.py"), quiet=True)
+        load_module_from_file("email_sender", os.path.join(email_dir, "email_sender.py"), quiet=True)
+        load_module_from_file("email_scheduler", os.path.join(email_dir, "email_scheduler.py"), quiet=True)
 
     # UI MODULES MANUAL LOAD
     try:
-        pages_dir = os.path.join(email_dir, "pages")
-        
+        pages_dir = os.path.join(email_dir, "pages") if email_dir else None
+        if not pages_dir or not os.path.exists(pages_dir):
+            st.warning("⚠️ Email System pages directory not found.")
+            return
+
         # Load modules manually to bypass import system quirks
         m_lm = load_module_from_file("lead_management", os.path.join(pages_dir, "lead_management.py"))
         m_ec = load_module_from_file("email_campaigns", os.path.join(pages_dir, "email_campaigns.py"))
@@ -1148,10 +1154,10 @@ def email_sender():
         m_ai = load_module_from_file("ai_tools", os.path.join(pages_dir, "ai_tools.py"))
         
         # Settings is optional
-        m_st = load_module_from_file("settings", os.path.join(pages_dir, "settings.py"))
+        m_st = load_module_from_file("settings", os.path.join(pages_dir, "settings.py"), quiet=True)
         
         if not all([m_lm, m_ec, m_et, m_da, m_ai]):
-            st.error("❌ Failed to load one or more UI modules manually.")
+            st.error("❌ Critical UI modules could not be loaded. Please ensure the 'pages' directory contains all required scripts.")
             return
 
         # Extract functions
@@ -1450,28 +1456,24 @@ def google_maps_scraping():
             st.markdown('<a href="https://wa.me/923213809420" target="_blank"><button style="padding:10px; background:#25D366; color:white; border:none; border-radius:5px;">Upgrade via WhatsApp 📱</button></a>', unsafe_allow_html=True)
             return
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        leads = []
+        unique_leads = []
         
         try:
             config = Config()
-            # Temporarily disable robots.txt for testing to ensure results
             config._config['robots']['enabled'] = False
             config._config['scraping']['default_delay'] = delay
             config._config['scraping']['max_leads_per_session'] = max_leads
             
-            # Add Google Sheets credentials if available
-            if 'google_sheets_creds' in st.session_state:
-                config._config['google_sheets_creds'] = st.session_state.google_sheets_creds
-            
             logger = setup_logging(config)
+            status_text = st.empty()
+            progress_bar = st.progress(0)
             
             status_text.markdown("### 🔄 Initializing Advanced Scraper...")
             
-            # Initialize scraper
             scraper = SeleniumScraper(
                 config=config,
-                headless=not st.checkbox("Debug Mode (Show Browser)", value=False),
+                headless=not st.checkbox("Debug Mode (Show Browser)", value=False, key="scraping_headless_cb"),
                 guest_mode=True,
                 delay=delay
             )
@@ -1479,8 +1481,6 @@ def google_maps_scraping():
             status_text.markdown(f"### 🔍 Searching for **{query}** in **{location}**...")
             progress_bar.progress(10)
             
-            # Perform scraping
-            # Note: The scraper collects leads. Deduplication ensures uniqueness.
             leads = scraper.scrape_google_maps(
                 query=query,
                 location=location,
@@ -1489,22 +1489,14 @@ def google_maps_scraping():
             
             scraper.close()
             status_text.markdown("### ⚙️ Processing and Deduplicating Data...")
-            progress_bar.progress(75)
+            progress_bar.progress(70)
             
-            # Deduplicate
             deduplicator = Deduplicator(config)
             unique_leads = deduplicator.deduplicate(leads)
-            
-            # SaaS Usage Tracking
-            found_count = len(unique_leads)
-            new_total = st.session_state.usage_count + found_count
-            db.update_settings(st.session_state.username, {'usage_count': new_total})
-            st.session_state.usage_count = new_total
             
             status_text.markdown("### 💾 Preparing Download...")
             progress_bar.progress(90)
             
-            # Use temporary directory for export to avoid disk usage issues on Cloud
             with tempfile.TemporaryDirectory() as temp_dir:
                 exporter = DataExporter(config, output_dir=temp_dir)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1519,7 +1511,7 @@ def google_maps_scraping():
                     filename=base_filename
                 )
                 
-                # Store results in session state for persistence across reruns
+                # Store results in session state for persistence
                 st.session_state.scrape_results = unique_leads
                 results_list = []
                 for file_path in exported_files:
@@ -1531,9 +1523,15 @@ def google_maps_scraping():
                             results_list.append(('Download', f.read(), path_obj.suffix.upper(), path_obj.name))
                 st.session_state.exported_files_data = results_list
 
+                # SaaS Usage Tracking
+                found_count = len(unique_leads)
+                new_total = st.session_state.usage_count + found_count
+                db.update_settings(st.session_state.username, {'usage_count': new_total})
+                st.session_state.usage_count = new_total
+
                 progress_bar.progress(100)
                 status_text.markdown("### ✅ Generation Complete!")
-                st.rerun() # Force UI refresh to show persistent buttons
+                st.rerun()
         
         except Exception as e:
             st.error(f"System Error: {str(e)}")
