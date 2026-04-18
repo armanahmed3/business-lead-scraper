@@ -1083,12 +1083,15 @@ def email_sender():
     import sys
     import os
 
-    def load_module_from_file(module_name, file_path):
+    def load_module_from_file(module_name, file_path, quiet=False):
         """Helper to load a module directly from a file path"""
         try:
-            # UNIQUE NAMESPACE to avoid collision with other parts of the app
+            if not os.path.exists(file_path):
+                if not quiet:
+                    st.error(f"Missing File: {file_path}")
+                return None
+                
             unique_name = f"email_sys_{module_name}"
-            
             if unique_name in sys.modules:
                 return sys.modules[unique_name]
                 
@@ -1099,7 +1102,8 @@ def email_sender():
                 spec.loader.exec_module(module)
                 return module
         except Exception as e:
-            st.error(f"Failed to load {module_name} from {file_path}: {e}")
+            if not quiet:
+                st.error(f"Failed to load {module_name}: {e}")
             return None
         return None
 
@@ -1114,34 +1118,34 @@ def email_sender():
     
     if not email_dir or not os.path.exists(email_dir):
         # Fallback for cloud structure variations
-        if os.path.exists(os.path.join(current_dir, "Email Sending  Stremlit")):
-             email_dir = os.path.join(current_dir, "Email Sending  Stremlit")
+        fallback_path = os.path.join(current_dir, "Email Sending  Stremlit")
+        if os.path.exists(fallback_path):
+             email_dir = fallback_path
 
     if email_dir:
-        # Pre-load core dependencies manually to ensure they exist in sys.modules
-        lead_db_path = os.path.join(email_dir, "lead_database.py")
-        ai_gen_path = os.path.join(email_dir, "ai_email_generator.py")
-        email_sender_path = os.path.join(email_dir, "email_sender.py")
-        email_scheduler_path = os.path.join(email_dir, "email_scheduler.py")
-        
-        load_module_from_file("lead_database", lead_db_path)
-        load_module_from_file("ai_email_generator", ai_gen_path)
-        load_module_from_file("email_sender", email_sender_path)
-        load_module_from_file("email_scheduler", email_scheduler_path)
-        
-        # Add pages to sys.path if not present
+        # Add all relevant directories to sys.path to resolve child imports
         pages_dir = os.path.join(email_dir, "pages")
-        if pages_dir not in sys.path:
-            sys.path.append(pages_dir)
-            
-        # Add main email dir to sys.path too
-        if email_dir not in sys.path:
-            sys.path.append(email_dir)
+        backend_dir = os.path.join(email_dir, "backend")
+        services_dir = os.path.join(backend_dir, "services")
+        
+        for d in [email_dir, pages_dir, backend_dir, services_dir]:
+            if os.path.exists(d) and d not in sys.path:
+                sys.path.append(d)
+
+        # Pre-load core dependencies manually if they exist
+        # We load these 'quietly' because they might be missing or replaced by the backend structure
+        load_module_from_file("lead_database", os.path.join(email_dir, "lead_database.py"), quiet=True)
+        load_module_from_file("ai_email_generator", os.path.join(email_dir, "ai_email_generator.py"), quiet=True)
+        load_module_from_file("email_sender", os.path.join(email_dir, "email_sender.py"), quiet=True)
+        load_module_from_file("email_scheduler", os.path.join(email_dir, "email_scheduler.py"), quiet=True)
 
     # UI MODULES MANUAL LOAD
     try:
-        pages_dir = os.path.join(email_dir, "pages")
-        
+        pages_dir = os.path.join(email_dir, "pages") if email_dir else None
+        if not pages_dir or not os.path.exists(pages_dir):
+            st.warning("⚠️ Email System pages directory not found.")
+            return
+
         # Load modules manually to bypass import system quirks
         m_lm = load_module_from_file("lead_management", os.path.join(pages_dir, "lead_management.py"))
         m_ec = load_module_from_file("email_campaigns", os.path.join(pages_dir, "email_campaigns.py"))
@@ -1150,10 +1154,10 @@ def email_sender():
         m_ai = load_module_from_file("ai_tools", os.path.join(pages_dir, "ai_tools.py"))
         
         # Settings is optional
-        m_st = load_module_from_file("settings", os.path.join(pages_dir, "settings.py"))
+        m_st = load_module_from_file("settings", os.path.join(pages_dir, "settings.py"), quiet=True)
         
         if not all([m_lm, m_ec, m_et, m_da, m_ai]):
-            st.error("❌ Failed to load one or more UI modules manually.")
+            st.error("❌ Critical UI modules could not be loaded. Please ensure the 'pages' directory contains all required scripts.")
             return
 
         # Extract functions
