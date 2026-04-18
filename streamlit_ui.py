@@ -1086,13 +1086,16 @@ def email_sender():
     def load_module_from_file(module_name, file_path):
         """Helper to load a module directly from a file path"""
         try:
-            if module_name in sys.modules:
-                return sys.modules[module_name]
+            # UNIQUE NAMESPACE to avoid collision with other parts of the app
+            unique_name = f"email_sys_{module_name}"
+            
+            if unique_name in sys.modules:
+                return sys.modules[unique_name]
                 
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
+            spec = importlib.util.spec_from_file_location(unique_name, file_path)
             if spec and spec.loader:
                 module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
+                sys.modules[unique_name] = module
                 spec.loader.exec_module(module)
                 return module
         except Exception as e:
